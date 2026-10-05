@@ -73,10 +73,22 @@ portalfinder export --db portalfinder.db --out exports/companies.csv
    `--status failed` (or `--status no_portal_found`) to retry companies that
    ended in that status, or `--all` to redo every company that isn't
    excluded (useful after updating the tool; combine with `--limit`).
+   `--country India` (repeatable) processes only companies in that country.
 3. `report` prints counts per status and exits with an error if any company
    is unaccounted for.
 4. `export` writes the CSV: one row per portal, plus one row for each
-   company without a portal.
+   company without a portal. Its `organization_type` column says whether
+   the row is a `company` or an `education`, `healthcare` or `public body`
+   organisation (Wikidata lists universities, hospitals and public bodies
+   as businesses too). Filter the export with `--country` and `--type`,
+   both repeatable, for example:
+
+   ```
+   portalfinder export --db portalfinder.db --out exports/india.csv --country India --type company
+   ```
+
+   Country names are the ones in the `country` column (any case);
+   `portalfinder countries --db portalfinder.db` lists them with counts.
 
 Run `portalfinder <command> --help` for every option.
 

@@ -156,3 +156,51 @@ def test_export_hides_stale_portals_of_excluded_companies(conn, tmp_path):
     assert export_csv(conn, out) == 1
     row = next(csv.DictReader(out.open()))
     assert (row["pipeline_status"], row["career_page_url"]) == ("excluded", "https://cegep.ca/hand")
+
+
+@pytest.mark.parametrize("name,industry,expected", [
+    ("University of Michigan", "higher education", "education"),
+    ("Toronto District School Board", None, "education"),
+    ("Oslo University Hospital", "hospital", "education"),  # name says university first
+    ("Health Service Executive", None, "healthcare"),
+    ("Ministry of National Defense", None, "public body"),
+    ("Montgomery County Public Schools", None, "education"),
+    ("Siemens", "industrial manufacturing; electrical industry", "company"),
+    ("China Academy of Launch Vehicle Technology", "aerospace industry", "company"),
+    ("Hilton Worldwide", "hospitality industry", "company"),
+    ("Zakłady Chemiczne Police", "chemical industry", "company"),  # Police is a town
+    ("Municipal Transport Company of Madrid", "public transport", "company"),
+    ("Bertelsmann", "educational system; service; media", "company"),
+    ("Massachusetts Institute of Technology", "higher education", "education"),
+])
+def test_organization_type(name, industry, expected):
+    from portalfinder.export import organization_type
+    assert organization_type(name, industry) == expected
+
+
+def test_export_filters_by_country_and_type(tmp_path):
+    from typer.testing import CliRunner
+    from portalfinder.cli import app
+    from portalfinder.db import connect
+    db = tmp_path / "t.db"
+    conn = connect(db)
+    ingest(conn, "test", [
+        CompanyRecord("test", "1", "Infosys", 300000, country="India"),
+        CompanyRecord("test", "2", "University of Delhi", 5000, country="India", industry="higher education"),
+        CompanyRecord("test", "3", "Siemens", 300000, country="Germany"),
+    ])
+    conn.commit()
+    out = tmp_path / "in.csv"
+    assert export_csv(conn, out, countries=["india"]) == 2
+    rows = list(csv.DictReader(out.open()))
+    assert {(r["company_name"], r["organization_type"]) for r in rows} == {
+        ("Infosys", "company"), ("University of Delhi", "education")}
+    assert export_csv(conn, out, countries=["India", "Germany"], org_types=["company"]) == 2
+    runner = CliRunner()
+    result = runner.invoke(app, ["export", "--db", str(db), "--out", str(out),
+                                 "--country", "India", "--type", "company"])
+    assert result.exit_code == 0, result.output
+    assert "Wrote 1 rows" in result.output
+    assert runner.invoke(app, ["export", "--db", str(db), "--type", "shop"]).exit_code == 2
+    listed = runner.invoke(app, ["countries", "--db", str(db)])
+    assert "India" in listed.output and "Germany" in listed.output

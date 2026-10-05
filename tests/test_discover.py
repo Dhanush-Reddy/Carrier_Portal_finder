@@ -574,3 +574,9 @@ def test_malformed_urls_are_not_internal_errors(website, link):
 
     result = asyncio.run(go())
     assert result.reason != "internal_error", result.detail
+
+
+def test_discover_can_be_limited_to_countries(loaded):
+    loaded.execute("UPDATE companies SET country = 'Peru' WHERE name IN ('Beta Inc', 'Eta Group')")
+    summary = run(loaded, countries=["peru"])
+    assert summary.selected == 2

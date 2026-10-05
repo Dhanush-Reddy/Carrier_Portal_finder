@@ -637,10 +637,14 @@ async def discover_all(
     concurrency: int = 10,
     company_ids: list[int] | None = None,
     on_result=None,
+    countries: list[str] | None = None,
 ) -> DiscoverySummary:
     sql = "SELECT id, name, website FROM companies WHERE status IN ({})".format(
         ",".join("?" for _ in statuses))
     params: list = list(statuses)
+    if countries:
+        sql += " AND LOWER(country) IN ({})".format(",".join("?" for _ in countries))
+        params += [c.strip().lower() for c in countries]
     if company_ids:
         sql += " AND id IN ({})".format(",".join("?" for _ in company_ids))
         params += company_ids
