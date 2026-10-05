@@ -97,12 +97,16 @@ For each company, largest first:
 2. With no careers link, look for careers pages in the site's sitemap
    (declared in robots.txt, or `/sitemap.xml`), then try `/careers`, `/jobs`,
    `careers.<domain>`, `jobs.<domain>` and other common locations. A path
-   that just redirects back to the homepage doesn't count.
+   that just redirects back to the homepage doesn't count, and neither do
+   news articles that happen to mention jobs.
 3. The best-ranked link is the **global** portal. On it, find the link or
    embed into an ATS and follow redirects to get the **final ATS URL**,
    reduced to the portal's entry point (a Workday sign-in redirect becomes
    the career site, a Lever job advert becomes the company's board). Job
-   search links are preferred over sign-in or profile links. A hosted career
+   search links are preferred over sign-in or profile links, and boards named
+   after the company over others. Test (sandbox) boards are never used. A
+   group page that only links its subsidiaries' boards gets no board of its
+   own, so a subsidiary's board is not reported as the group's. A hosted career
    site on the company's own domain (common with Phenom, SuccessFactors and
    Avature) is its own final URL; its provider is read from the scripts it
    loads.
@@ -112,14 +116,21 @@ For each company, largest first:
    **affiliate** site on another domain, or a different ATS tenant
    (**other**). Pages like `/careers/benefits`, sign-in and account pages,
    single job adverts, PDFs, recruitment-fraud warnings, blog and news posts,
+   employee stories, equal-opportunity statements, career advice,
    government sites and third-party boards (LinkedIn, Indeed, Handshake...)
-   are not portals, and sub-pages of a portal already kept are skipped.
-   Tracking parameters (`utm_*`, `_ga`, `gclid`...) are removed from URLs. Per company: up to 30 regional, 5 affiliate,
-   3 graduate and 3 other extras; any beyond that are counted in the event
-   log.
+   are not portals, and sub-pages of a portal already kept are skipped. So
+   are variants of a page already kept: the same page with another
+   `?locale=`, or a link that redirects to a page already kept.
+   Tracking parameters (`utm_*`, `_ga`, `gclid`...) are removed from URLs.
+   Per company: up to 30 regional, 5 affiliate, 3 graduate and 3 other
+   extras; any beyond that, and the duplicates, are counted in the event log.
 
-Robots.txt is respected and requests identify themselves with a
-`portalfinder/0.1` user agent.
+Robots.txt is respected as [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309)
+says: its rules apply when it can be read; a 4xx answer (often a bot
+firewall's 403) means there are no rules; a 5xx answer means nothing may be
+fetched. Requests identify themselves with a `portalfinder/0.1` user agent,
+and a "too many requests" (429) answer is retried once after the wait the
+site asks for (up to 30 seconds).
 
 **Confidence (0–1)** adds up these signals: linked from the official site
 (0.30) or found by probing (0.20), on the company's own domain (0.20), ATS
@@ -134,8 +145,8 @@ portal in `career_portals.evidence`.
 | `discovered` | at least one portal found |
 | `needs_review` | `careers_page_unreachable`: careers link found but the page blocks or errors (often bot protection) |
 | `no_portal_found` | `no_website`, `no_careers_link`, `no_links_in_html` (JavaScript-only site, needs the browser fallback) |
-| `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `http_<code>`, `internal_error` |
-| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error). Auto-discovered portals are removed; the company row stays. |
+| `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `robots_unreachable` (robots.txt answers with a server error), `http_<code>`, `internal_error` |
+| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error). Auto-discovered portals are removed (and left out of the export); the company row stays. |
 
 Re-running discovery for a company replaces its auto-discovered portals;
 portals with `discovered_via = 'manual'` are kept.

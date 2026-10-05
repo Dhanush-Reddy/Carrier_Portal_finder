@@ -1,7 +1,8 @@
 """CSV export: one row per career portal.
 
 Companies with no portal yet still get one row (with empty portal columns),
-so the export always lists every company in the database.
+so the export always lists every company in the database. Excluded companies
+are listed without their automatically found portals.
 """
 
 from __future__ import annotations
@@ -29,7 +30,10 @@ SELECT c.id AS company_id, c.name AS company_name, c.employee_count, c.linkedin_
        cp.final_ats_url, cp.ats_provider, cp.verification_status, cp.confidence,
        cp.last_verified_at, cp.discovered_via
   FROM companies c
+  -- An excluded company keeps only portals added by hand. (Databases from
+  -- before ingest removed the others may still hold them.)
   LEFT JOIN career_portals cp ON cp.company_id = c.id
+       AND (c.status != 'excluded' OR cp.discovered_via = 'manual')
  ORDER BY c.employee_count DESC, c.id, cp.id
 """
 

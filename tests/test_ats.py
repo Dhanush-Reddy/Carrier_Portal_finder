@@ -16,6 +16,10 @@ from portalfinder.normalize import linkedin_company_url, website_domain
     ("https://acme.taleo.net/careersection/2/jobsearch.ftl", "Oracle/Taleo"),
     ("https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX", "Oracle Recruiting Cloud"),
     ("https://jobs.smartrecruiters.com/Visa", "SmartRecruiters"),
+    ("https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/en/sites/careers",
+     "Oracle Recruiting Cloud"),
+    ("https://tbcdn.talentbrew.com/company/391/js/main.js", "Radancy"),
+    ("https://hdfcbank.ripplehire.com/candidate/careers", "RippleHire"),
     ("https://www.apple.com/careers/us/", None),
     ("https://evilmyworkdayjobs.com.example.org/x", None),
 ])
@@ -52,6 +56,10 @@ def test_ats_tenant():
     ("https://acme-career.talent-soft.com/mon-compte/cv.aspx", "https://acme-career.talent-soft.com/"),
     ("https://www.acme.com/careers", "https://www.acme.com/careers"),
     ("https://ghr.wd1.myworkdayjobs.com/en-us/Lateral-US/job/123", "https://ghr.wd1.myworkdayjobs.com/en-us/Lateral-US"),
+    ("https://hdjq.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs?keyword=MBA&mode=location",
+     "https://hdjq.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1"),
+    ("https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/tc-join",
+     "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001"),
 ])
 def test_clean_ats_url(url, clean):
     assert clean_ats_url(url) == clean
@@ -72,6 +80,13 @@ def test_strip_tracking():
     assert strip_tracking("https://jobs.veolia.com/fr?utm_source=veolia.com&utm_medium=web&lang=fr#top") \
         == "https://jobs.veolia.com/fr?lang=fr"
     assert strip_tracking("https://x.com/stellenboerse/?_ga=cd*123") == "https://x.com/stellenboerse/"
+    assert strip_tracking("https://www.ibm.com/in-en/careers?lnk=hpii1in") == "https://www.ibm.com/in-en/careers"
+    assert strip_tracking("https://karriere.aldi-sued.de/?jobPipeline=website&applySourceOverride=website") \
+        == "https://karriere.aldi-sued.de/"
+    assert strip_tracking("https://jobs.issworld.com/search/?createNewAlert=false&locale=da_DK") \
+        == "https://jobs.issworld.com/search/?locale=da_DK"
+    # ADP's company id must survive.
+    assert "cid=abc" in strip_tracking("https://workforcenow.adp.com/mascsr/recruitment.html?cid=abc")
 
 
 @pytest.mark.parametrize("url", [
@@ -79,6 +94,28 @@ def test_strip_tracking():
     "https://www.unilevernotices.com/recruitment-notices.html",
     "https://stories.pepsicojobs.com/blog/2025/10/01/unlocking-opportunities",
     "https://www.acme.com/careers/news/2024/award",
+    # Seen in the third run.
+    "https://jfsa.com.br/en/jf-announces-investment-plan-of-r-38-5-billion-and-30-thousand-new-direct-jobs-in-brazil-by-2026/",
+    "http://www.credit-agricole.com/communiques-de-presse-generaux/le-groupe-lance-son-nouveau-site-carrieres",
+    "https://www.continental.com/en/career/working-at-continental/people-blog/melodie-kessler/",
+    "https://jobs.boeing.com/UK-EOEStatement",
+    "https://careers.geaerospace.com/global/en/ge-aerospace-brazil-eoe-diversity",
+    "https://jobs.boeing.com/meet-Tyson",
+    "https://jobs.guidecom.de/jobportal/dsgv/viewAusschreibung/2025-004.html",
+    "https://www.randstad.ca/job-seeker/career-resources/",
+    "https://www.randstad.com.au/job-seekers/job-seeker-toolkit/",
+    "https://www.randstadenterprise.com/solutions/talent-development/career-coaching",
 ])
 def test_fraud_notices_blogs_and_news_are_not_portals(url):
     assert is_not_portal(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://jobs.guidecom.de/jobportal/dsgv/viewAusschreibungen.html",
+    "https://www.airbus.com/en/careers/students-and-graduates/apprentices/apprenticeships-in-the-united-kingdom",
+    "https://jobs.hilton.com/united-states-canada-caribbean-latin-america",
+    "https://www.capgemini.com/careers/career-paths/students-and-graduates/",
+    "https://www.geoengineering.example/careers",
+])
+def test_portal_pages_are_not_mistaken_for_articles(url):
+    assert not is_not_portal(url)

@@ -53,7 +53,10 @@ PATTERNS: list[tuple[str, str, str | None]] = [
     ("Zoho Recruit", r"(^|\.)zohorecruit\.(com|eu|in)$", None),
     ("Moka", r"(^|\.)mokahr\.com$", None),
     ("Beisen", r"(^|\.)hotjob\.cn$|(^|\.)zhiye\.com$", None),
-    ("Radancy", r"(^|\.)tmp\.com$|(^|\.)radancy\.net$", None),
+    ("Radancy", r"(^|\.)tmp\.com$|(^|\.)radancy\.net$|(^|\.)talentbrew\.com$", None),
+    ("RippleHire", r"(^|\.)ripplehire\.com$", None),
+    # Oracle Recruiting Cloud on the company's own domain (enterpriseplatform.dell.com).
+    ("Oracle Recruiting Cloud", r".", r"^/hcmUI/CandidateExperience/"),
 ]
 
 _COMPILED = [
@@ -105,16 +108,25 @@ NOT_PORTAL_RE = re.compile(
     r"/user/|passport\.|mon-compte|navbarlevel=my_profile|jobalert|job-alert|"
     r"talentcommunity|talent-community|jobid=|job_id=|jobdetails|job-details|"
     r"/job/[^/]+|/jobs/\d|requisition|/req/|/vacancy/|/stelle/|/offre/|"
-    # Recruitment-fraud warnings, blog posts and news are linked from many
-    # careers pages but are not portals.
-    r"fraud|scam|phishing|recruitment-notice|/blog/|/news/|/press/|/articles?/|"
-    r"^stories\.|\.stories\.|/stories/)",
+    r"/viewausschreibung/|"
+    # Recruitment-fraud warnings, blog posts, news, employee stories, equal
+    # opportunity statements and career advice are linked from many careers
+    # pages but are not portals.
+    r"fraud|scam|phishing|recruitment-notice|[/-]blogs?/|/news/|/press/|press-releases?|"
+    r"communiques|/magazine/|/articles?/|^stories\.|\.stories\.|/stories/|/meet-|"
+    r"(?:^|[/_-])(?:eoe|eeo)|career-(?:resources|advice|coaching|tips)|toolkit)",
     re.IGNORECASE,
 )
+# A path segment this many words long is an article slug
+# ("jf-announces-investment-plan-of-...-new-jobs"), not a portal page.
+ARTICLE_SLUG_WORDS = 7
 
 
+# Analytics and navigation-source parameters that do not change the page.
+# (Not "cid": ADP uses it as the company id.)
 TRACKING_PARAMS = re.compile(
-    r"^(utm_[a-z]+|_ga|_gl|gclid|fbclid|msclkid|mc_cid|mc_eid|igshid|yclid)$", re.IGNORECASE)
+    r"^(utm_[a-z]+|_ga|_gl|gclid|fbclid|msclkid|mc_cid|mc_eid|igshid|yclid|icid|"
+    r"intcmp|lnk|gnav|trk|jobpipeline|applysourceoverride|createnewalert)$", re.IGNORECASE)
 
 
 def strip_tracking(url: str) -> str:
@@ -130,12 +142,16 @@ def is_asset(url: str) -> bool:
 
 
 def is_not_portal(url: str) -> bool:
-    """Sign-in, account, saved-search and single-job URLs."""
+    """Sign-in, account, saved-search, single-job and article URLs."""
     parts = urlsplit(url)
-    return bool(NOT_PORTAL_RE.search(f"{parts.netloc}{parts.path}?{parts.query}"))
+    if NOT_PORTAL_RE.search(f"{parts.netloc}{parts.path}?{parts.query}"):
+        return True
+    return any(len(re.split(r"[-_]", seg)) >= ARTICLE_SLUG_WORDS
+               for seg in parts.path.split("/"))
 
 
 _WORKDAY_LOCALE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$", re.IGNORECASE)
+_ORACLE_SITE = re.compile(r"^(/hcmUI/CandidateExperience/[^/]+/sites/[^/]+)", re.IGNORECASE)
 
 
 def clean_ats_url(url: str) -> str:
@@ -160,6 +176,12 @@ def clean_ats_url(url: str) -> str:
         if company:
             return urlunsplit((parts.scheme, parts.netloc, parts.path,
                                urlencode({"company": company}), ""))
+    if provider == "Oracle Recruiting Cloud":
+        # .../sites/CX_1/jobs?keyword=MBA and .../sites/CX_1001/tc-join are
+        # pages of the site .../sites/CX_1.
+        m = _ORACLE_SITE.match(parts.path)
+        if m:
+            return urlunsplit((parts.scheme, parts.netloc, m.group(1), "", ""))
     if provider in PATH_TENANT_PROVIDERS:
         # The portal is the tenant's board, e.g. https://jobs.lever.co/acme
         params = dict(parse_qsl(parts.query))

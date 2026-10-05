@@ -24,7 +24,7 @@ import re
 import sqlite3
 import traceback
 from dataclasses import dataclass, field
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import tldextract
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
@@ -60,7 +60,8 @@ SCOPE_CAPS = {"regional": 30, "graduate": 3, "affiliate": 5, "other": 3}
 MAX_REGION_TEXT = 60
 # Graduate wording inside URLs, where words run together ("ATTcollege").
 GRADUATE_URL_RE = re.compile(
-    r"college|graduate|campus|internship|student|early-?careers?|apprentic", re.IGNORECASE)
+    r"college|graduate|campus|internship|student|early-?careers?|apprentic|high-?school",
+    re.IGNORECASE)
 # ATS tenants used for testing, never the live portal.
 SANDBOX_RE = re.compile(r"sandbox|staging|[-.]uat[-.]|[-.]test[-.]|preprod", re.IGNORECASE)
 PROBE_PATHS = ("/careers", "/jobs", "/en/careers", "/career", "/about/careers",
@@ -90,6 +91,25 @@ def normalize_url(url: str) -> str:
     parts = urlsplit(url)
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+
+
+# Query parameters that pick a language version of a page, not another page.
+LANGUAGE_PARAMS = {"locale", "lang", "language", "hl", "userlocation"}
+
+
+def page_key(url: str) -> str:
+    """The same for every variant of one page.
+
+    Ignores the scheme, tracking parameters and language parameters, so
+    ``?locale=de_DE`` or ``?userlocation=gb`` versions of a careers page
+    count as that page. Other parameters can make a different page
+    (``search-jobs?location=...``) and are kept.
+    """
+    parts = urlsplit(clean_ats_url(url) if detect_ats(url) else strip_tracking(url))
+    query = urlencode(sorted((k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                             if k.lower() not in LANGUAGE_PARAMS))
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit(("", parts.netloc.lower(), path, query, ""))
 
 
 @dataclass
@@ -149,8 +169,14 @@ def _is_government(url: str) -> bool:
     return ext.suffix.split(".")[0] in ("gov", "mil", "gob", "gouv") or ext.domain == "gov"
 
 
+def _valid_host(url: str) -> bool:
+    """A real public host, not ``www.`` from a broken link."""
+    return bool(_extract(urlsplit(url).hostname or "").suffix)
+
+
 def is_careers_link(link: Link) -> bool:
-    if link.kind != "a" or _excluded(link.url) or is_asset(link.url) or is_not_portal(link.url):
+    if (link.kind != "a" or not _valid_host(link.url) or _excluded(link.url)
+            or is_asset(link.url) or is_not_portal(link.url) or SANDBOX_RE.search(link.url)):
         return False
     parts = urlsplit(link.url)
     return (
@@ -198,25 +224,47 @@ def classify_scope(link_text: str, url: str, company_domains: set[str]) -> tuple
     return "other", None
 
 
-def find_ats_link(parsed: ParsedPage) -> str | None:
+def find_ats_link(parsed: ParsedPage, company_name: str = "") -> str | None:
     """The best link into an ATS on a page.
 
     Job-search links beat sign-in, profile and single-job links; anchors beat
-    iframes and forms. Scripts and other static files are never portals.
+    iframes and forms; boards named after the company beat others. Scripts,
+    static files and test (sandbox) boards are never portals.
+
+    A group page that links several companies' boards, none named after the
+    group and none labelled as a job search (Grupo ACS linking Turner's and
+    others'), has no board of its own: None, so no subsidiary's board is
+    reported as the group's.
     """
     ats_links = [
         l for l in parsed.links
         if l.kind != "script" and not is_asset(l.url) and detect_ats(l.url)
+        and not SANDBOX_RE.search(l.url)
     ]
     if not ats_links:
         return None
+
+    def named(l: Link) -> bool:
+        return bool(company_name) and name_matches(company_name, l.url)
+
+    def job_text(l: Link) -> bool:
+        return bool(JOB_CONTENT_RE.search(l.text or "") or has_career_text(l.text or ""))
+
+    def graduate(l: Link) -> bool:
+        return bool(GRADUATE_RE.search(l.text or "") or GRADUATE_URL_RE.search(l.url))
+
+    # A graduate board next to the main one is normal, so it doesn't count here.
+    main_links = [l for l in ats_links if not is_not_portal(l.url) and not graduate(l)]
+    if (company_name and len({ats_tenant(l.url) for l in main_links}) >= 2
+            and not any(named(l) or job_text(l) for l in main_links)):
+        return None
     ats_links.sort(key=lambda l: (
         is_not_portal(l.url),
-        bool(SANDBOX_RE.search(l.url)),
         # A graduate-only board is not the main one (AT&T's ATTcollege).
-        bool(GRADUATE_RE.search(l.text or "") or GRADUATE_URL_RE.search(l.url)),
+        graduate(l),
         l.kind != "a",
-        not JOB_CONTENT_RE.search(l.text or "") and not has_career_text(l.text or ""),
+        not named(l),
+        not job_text(l),
     ))
     return ats_links[0].url
 
@@ -230,7 +278,7 @@ def ats_from_scripts(parsed: ParsedPage) -> tuple[str, str | None] | None:
     boards that name their tenant, e.g. Greenhouse's ``embed/job_board/js?for=acme``.
     """
     for link in parsed.links:
-        if link.kind == "script":
+        if link.kind == "script" and not SANDBOX_RE.search(link.url):
             provider = detect_ats(link.url)
             if provider:
                 board = None
@@ -321,15 +369,16 @@ class CompanyDiscovery:
         portal.page_title = parsed.title[:300]
         final_page_url = portal.final_page_url = page.url
         ats_via = None
-        if detect_ats(final_page_url):
+        if detect_ats(final_page_url) and not SANDBOX_RE.search(final_page_url):
             ats_url, ats_via = final_page_url, "page_url"
         else:
-            ats_url = find_ats_link(parsed)
+            ats_url = find_ats_link(parsed, self.company.name)
             ats_via = "link" if ats_url else None
         if ats_url and ats_url != final_page_url:
             portal.ats_link = ats_url
             ats_page, ats_error = await self._fetch(ats_url)
-            if ats_page is not None and not ats_error and detect_ats(ats_page.url):
+            if (ats_page is not None and not ats_error and detect_ats(ats_page.url)
+                    and not SANDBOX_RE.search(ats_page.url)):
                 ats_url = ats_page.url
         if ats_url:
             portal.final_ats_url = clean_ats_url(ats_url)
@@ -451,11 +500,13 @@ class CompanyDiscovery:
         portals = [main]
         # The main careers site is the company's own even when it has its own
         # domain (amazon.jobs, verbund.edeka), so its pages are not affiliates.
-        if main.final_page_url and not detect_ats(main.final_page_url):
-            self.domains.add(registrable_domain(main.final_page_url))
+        # That holds even when it could not be fetched (career.abchina.com.cn).
+        for url in (main.career_page_url, main.final_page_url):
+            if url and not detect_ats(url):
+                self.domains.add(registrable_domain(url))
 
         # Extra portals: from the homepage and the main careers page.
-        seen = {normalize_url(u) for u in (main.career_page_url, main.final_ats_url, main.ats_link) if u}
+        seen = {page_key(u) for u in (main.career_page_url, main.final_ats_url, main.ats_link) if u}
         tenants = {t for t in map(ats_tenant, (main.career_page_url, main.final_ats_url, main.ats_link)) if t}
         pool = list(candidates)
         # Links on a page that is itself an ATS are job listings, not more portals.
@@ -465,7 +516,7 @@ class CompanyDiscovery:
         kept_paths: dict[str, list[str]] = {}
         skipped: dict[str, int] = {}
         for link in pool:
-            key = normalize_url(link.url)
+            key = page_key(link.url)
             tenant = ats_tenant(link.url)
             if key in seen or (tenant and tenant in tenants):
                 continue  # already covered, e.g. a job link into the main ATS
@@ -486,14 +537,24 @@ class CompanyDiscovery:
                 tenants.add(tenant)
             kept_paths.setdefault(scope, []).append(key)
             extras.append((link, scope, region))
+        # Pages reached after redirects, so that /europe -> /en/europe is not
+        # kept next to /en/europe, nor bank.sbi/careers -> the main page.
+        landed = {page_key(u) for u in (main.career_page_url, main.final_page_url) if u}
+        duplicates = 0
         for link, scope, region in extras:
             portal = PortalFound(strip_tracking(link.url), scope, region, link_url=link.url,
                                  discovered_via="careers_page_link",
                                  signals={"linked_from_official_site": True})
             await self._resolve(portal, link.text)
+            if portal.final_page_url and page_key(portal.final_page_url) in landed:
+                duplicates += 1
+                continue
+            landed.update(page_key(u) for u in (portal.career_page_url, portal.final_page_url) if u)
             portals.append(portal)
 
         detail = {"extra_portals_over_cap": skipped} if skipped else {}
+        if duplicates:
+            detail["extra_portals_same_page"] = duplicates
         if main.fetch_error:
             return DiscoveryResult(cid, "needs_review", "careers_page_unreachable",
                                    portals, {**detail, "error": main.fetch_error})

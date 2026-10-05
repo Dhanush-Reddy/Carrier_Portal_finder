@@ -35,14 +35,15 @@ EXCLUDED_DOMAIN_NAMES = {
     "youtube", "monster", "ziprecruiter", "naukri", "seek", "stepstone", "xing",
     "tiktok", "weibo", "wechat", "joinhandshake", "simplyhired", "careerbuilder",
     "jobstreet", "totaljobs", "reed", "zhaopin", "51job", "hh", "superjob",
-    "builtin", "wellfound", "dice", "jobindex", "infojobs",
+    "builtin", "wellfound", "dice", "jobindex", "infojobs", "kariyer", "computrabajo",
+    "bumeran", "pracuj", "jobsdb", "rikunabi", "mynavi", "catho",
 }
 EXCLUDED_HOSTS = {"play.google.com", "apps.apple.com", "itunes.apple.com"}
 
 GRADUATE_RE = re.compile(
     r"\b(graduates?|grad(?:uate)? programs?|early[ -]careers?|students?|campus|"
     r"universit(?:y|ies)|interns?|internships?|apprentices?|apprenticeships?|"
-    r"trainees?|traineeships?|entry[ -]level|emerging talent|young professionals|"
+    r"trainees?|traineeships?|entry[ -]level|emerging talent|young professionals|high ?schools?|"
     r"nachwuchs|absolventen|praktik(?:um|a)|ausbildung|duales studium|studierende|"
     r"sch[uü]ler|werkstudent(?:en)?|stagiaires?|alternance|becarios?|"
     r"pr[aá]cticas|estagi[aá]rios?|新卒|校园招聘|校招)\b",
@@ -84,9 +85,9 @@ _REGION_SLUGS = {
 
 COMPANY_SUFFIXES = {
     "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited",
-    "plc", "llc", "lp", "llp", "group", "holdings", "holding", "sa", "ag", "se", "nv",
-    "bv", "gmbh", "spa", "ab", "asa", "oyj", "as", "kk", "the", "and", "of", "de",
-    "international", "global",
+    "plc", "llc", "lp", "llp", "group", "grupo", "groupe", "gruppe", "holdings", "holding",
+    "sa", "ag", "se", "nv", "bv", "gmbh", "spa", "ab", "asa", "oyj", "as", "kk", "the", "and",
+    "of", "de", "international", "global",
 }
 
 JOB_CONTENT_RE = re.compile(
@@ -103,12 +104,18 @@ def has_career_text(text: str) -> bool:
     return bool(CAREER_TEXT_RE.search(text)) or any(t in text for t in CAREER_TEXT_CJK)
 
 
+# Too common as one word of a longer path segment ("talent-services",
+# "global-talent-centers") to mean careers there; still counts as a host
+# label (talent.alibaba.com) or a whole segment (/talent).
+WEAK_URL_WORDS = {"talent"}
+
+
 def url_tokens(host: str, path: str) -> set[str]:
     tokens = set(re.split(r"[./]", host.lower()))
     for seg in path.lower().split("/"):
         if seg:
             tokens.add(seg)
-            tokens.update(re.split(r"[-_]", seg))
+            tokens.update(set(re.split(r"[-_]", seg)) - WEAK_URL_WORDS)
     return tokens
 
 

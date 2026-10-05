@@ -105,10 +105,27 @@ SITE = {
         {"content-type": "application/xml"}),
     "https://pi.com/sitemap-pages.xml": (200,
         '<urlset><url><loc>https://pi.com/en/about</loc></url>'
+        '<url><loc>https://pi.com/pi-announces-plan-to-create-thousands-of-new-jobs</loc></url>'
         '<url><loc>https://pi.com/en/about/careers-at-pi/benefits</loc></url>'
         '<url><loc>https://pi.com/en/about/careers-at-pi</loc></url></urlset>',
         {"content-type": "application/xml"}),
     "https://pi.com/en/about/careers-at-pi": (200, html("Careers at Pi", "<p>Open roles</p>"), {}),
+    "https://pi.com/pi-announces-plan-to-create-thousands-of-new-jobs": (200,
+        html("Pi announces new jobs", "<p>Open roles</p>"), {}),
+    # Rho: a test (sandbox) ATS board, a page reached under two URLs, a
+    # language variant of the main page, a broken link and non-portal pages.
+    "https://rho.com/": (200, html("Rho", '<a href="/careers">Careers</a>'), {}),
+    "https://rho.com/careers": (200, html("Rho careers",
+        '<a href="https://rho-sandbox.eightfold.ai/careers">Search jobs</a>'
+        '<a href="/careers/europe">Careers in Europe</a>'
+        '<a href="/en/careers/europe">Europe</a>'
+        '<a href="/careers?locale=de_DE">Deutschland</a>'
+        '<a href="https://www./rho-karriere/studium">Studium</a>'
+        '<a href="/careers/people-blog/anna">Meet Anna, our graduate</a>'
+        '<a href="/careers/UK-EOEStatement">UK careers</a>'), {}),
+    "https://rho.com/careers/europe": (301, "", {"location": "https://rho.com/en/careers/europe"}),
+    "https://rho.com/en/careers/europe": (200, html("Rho Europe careers"), {}),
+    "https://rho-sandbox.eightfold.ai/careers": (200, html("Sandbox"), {}),
     # JS-only homepage.
     "https://iota.com/": (200, "<html><body><div id=root></div></body></html>", {}),
 }
@@ -147,6 +164,7 @@ COMPANIES = [
     ("Nu Post", "https://nupost.gov.in/"),
     ("Omicron SA", "https://omicron.com/"),
     ("Pi Industries", "https://pi.com/"),
+    ("Rho Group", "https://rho.com/"),
 ]
 
 
@@ -200,6 +218,7 @@ def test_every_company_gets_an_outcome(loaded):
         "Nu Post": ("discovered", None),
         "Omicron SA": ("discovered", None),
         "Pi Industries": ("discovered", None),
+        "Rho Group": ("discovered", None),
     }
     assert build_report(loaded).ok
     events = loaded.execute(
@@ -249,7 +268,7 @@ def test_rerun_replaces_portals_and_retries_selected_statuses(loaded):
     run(loaded)
     before = loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0]
     summary = run(loaded, statuses=("discovered", "failed"))
-    assert summary.selected == 11
+    assert summary.selected == 12
     assert loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0] == before
     assert build_report(loaded).ok
 
@@ -272,9 +291,9 @@ def test_unexpected_error_is_recorded_not_lost(loaded, monkeypatch):
 def test_export_has_one_row_per_portal(loaded, tmp_path):
     run(loaded)
     out = tmp_path / "out.csv"
-    # Acme 4 + Lambda 3 + Beta, Eta, Theta, Kappa, Mu, Nu, Omicron, Pi 1 each
-    # + 5 companies without portals
-    assert export_csv(loaded, out) == 20
+    # Acme 4 + Lambda 3 + Rho 2 + Beta, Eta, Theta, Kappa, Mu, Nu, Omicron, Pi
+    # 1 each + 5 companies without portals
+    assert export_csv(loaded, out) == 22
 
 
 def test_link_score_prefers_main_careers_page():
@@ -410,3 +429,110 @@ def test_discover_all_redoes_finished_companies_but_not_excluded(tmp_path):
     result = CliRunner().invoke(app, ["discover", "--db", str(db), "--all"])
     assert result.exit_code == 0, result.output
     assert "Processed 1 companies" in result.output
+
+
+def test_sandbox_boards_redirect_duplicates_and_junk_links_are_dropped(loaded):
+    run(loaded)
+    found = portals(loaded, "Rho Group")
+    assert list(found) == ["https://rho.com/careers", "https://rho.com/careers/europe"]
+    main = found["https://rho.com/careers"]
+    assert (main["ats_provider"], main["final_ats_url"]) == (None, "https://rho.com/careers")
+    europe = found["https://rho.com/careers/europe"]
+    assert (europe["scope"], europe["region"]) == ("regional", "Europe")
+    detail = json.loads(loaded.execute(
+        "SELECT e.detail FROM pipeline_events e JOIN companies c ON c.id = e.company_id"
+        " WHERE c.name = 'Rho Group' AND e.stage = 'discover'").fetchone()[0])
+    assert detail["extra_portals_same_page"] == 1
+
+
+def test_group_page_linking_subsidiary_boards_has_no_board_of_its_own():
+    from portalfinder.discover import ParsedPage, find_ats_link
+    hub = ParsedPage("Join ACS", [
+        Link("https://turnerconstruction.csod.com/ux/ats/careersite/2/home?c=turnerconstruction", "Turner", "a"),
+        Link("https://elgl.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001", "UGL", "a"),
+    ], "")
+    assert find_ats_link(hub, "Grupo ACS") is None
+    # A board named after the company wins over a subsidiary's.
+    hub.links.append(Link("https://acs.wd3.myworkdayjobs.com/Careers", "ACS", "a"))
+    assert find_ats_link(hub, "Grupo ACS") == "https://acs.wd3.myworkdayjobs.com/Careers"
+    # A graduate board next to the main one doesn't make a group page.
+    grads = ParsedPage("Careers", [
+        Link("https://ghr.wd1.myworkdayjobs.com/lateral-us", "", "a"),
+        Link("https://bofa.avature.net/campus", "", "a"),
+    ], "")
+    assert find_ats_link(grads, "Bank of America") == "https://ghr.wd1.myworkdayjobs.com/lateral-us"
+    # One board, or boards labelled as job searches, are kept as before.
+    single = ParsedPage("Careers", [Link("https://ghr.wd1.myworkdayjobs.com/lateral-us", "", "a")], "")
+    assert find_ats_link(single, "Bank of America") == "https://ghr.wd1.myworkdayjobs.com/lateral-us"
+
+
+def test_page_key_treats_variants_as_one_page():
+    from portalfinder.discover import page_key
+    assert page_key("https://jobs.issworld.com/search/?createNewAlert=false&locale=da_DK") == \
+        page_key("http://jobs.issworld.com/search?locale=en_GB")
+    assert page_key("https://jobs.natwestgroup.com?userlocation=gb") == page_key("https://jobs.natwestgroup.com")
+    assert page_key("https://career5.successfactors.eu/career?company=a") != \
+        page_key("https://career5.successfactors.eu/career?company=b")
+    # Disney's regional pages redirect to one search page with different filters.
+    assert page_key("https://www.disneycareers.com/en/search-jobs?acm=ALL&alrpm=6252001") != \
+        page_key("https://www.disneycareers.com/en/search-jobs?acm=ALL&alrpm=3996063")
+
+
+def test_url_and_scope_word_lists():
+    from portalfinder.discover import _excluded
+    from portalfinder.terms import has_career_url
+    assert _excluded("https://www.kariyer.net/firma-profil/sodexo-10807-877")
+    assert not has_career_url("www.randstaddigital.com", "/approach/talent-services/")
+    assert has_career_url("talent.alibaba.com", "/en/home")
+    assert classify_scope("High school", "https://yamato-transport-recruit.com/highschool/",
+                          {"kuronekoyamato.co.jp"}) == ("graduate", None)
+
+
+def _robots_fetcher(robots_status, page_status=200):
+    calls = []
+
+    def handle(request):
+        calls.append(request.url.path)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(robots_status, text="User-agent: *\nDisallow: /",
+                                  headers={"content-type": "text/plain"})
+        if page_status == 429 and calls.count("/") == 1:
+            return httpx.Response(429, headers={"retry-after": "0"})
+        return httpx.Response(200, text="<html></html>", headers={"content-type": "text/html"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    return Fetcher(client=client), calls
+
+
+@pytest.mark.parametrize("robots_status,expected", [
+    (200, "blocked_by_robots"),  # its rules apply
+    (403, None),                 # RFC 9309: 4xx means no rules
+    (404, None),
+    (503, "robots_unreachable"),  # 5xx means disallow everything
+])
+def test_robots_txt_status_codes(robots_status, expected):
+    from portalfinder.web import FetchError
+
+    async def go():
+        f, _ = _robots_fetcher(robots_status)
+        try:
+            await f.get("https://site.example/")
+            return None
+        except FetchError as exc:
+            return exc.reason
+        finally:
+            await f.aclose()
+
+    assert asyncio.run(go()) == expected
+
+
+def test_rate_limited_page_is_retried_once():
+    async def go():
+        f, calls = _robots_fetcher(404, page_status=429)
+        try:
+            page = await f.get("https://site.example/")
+            return page.status, calls.count("/")
+        finally:
+            await f.aclose()
+
+    assert asyncio.run(go()) == (200, 2)
