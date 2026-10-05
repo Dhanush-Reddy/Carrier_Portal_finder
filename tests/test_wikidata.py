@@ -6,14 +6,33 @@ from conftest import FIXTURES, load_fixture
 from portalfinder.sources import wikidata
 
 
+def parse_list(rows):
+    out = {}
+    wikidata.parse_list(rows, out)
+    return out
+
+
 def test_parse_list():
-    ids = wikidata.parse_list(load_fixture("wikidata_list.json"))
+    ids = parse_list(load_fixture("wikidata_list.json"))
     assert ids["Q312"] == 161000
     assert len(ids) == 4
 
 
+def test_parse_list_keeps_largest_count_across_bands():
+    out = {"Q1": 1500}
+    row = {"item": {"value": "http://www.wikidata.org/entity/Q1"}, "employees": {"value": "7000"}}
+    wikidata.parse_list([row], out)
+    assert out == {"Q1": 7000}
+
+
+def test_employee_bands_cover_everything_above_threshold():
+    assert wikidata.employee_bands(1000) == [
+        (1000, 2000), (2000, 5000), (5000, 10000), (10000, 50000), (50000, None)]
+    assert wikidata.employee_bands(20000) == [(20000, 50000), (50000, None)]
+
+
 def test_parse_details_groups_rows_and_keeps_all_values():
-    ids = wikidata.parse_list(load_fixture("wikidata_list.json"))
+    ids = parse_list(load_fixture("wikidata_list.json"))
     recs = wikidata.parse_details(load_fixture("wikidata_details.json"), ids)
     apple = recs["Q312"]
     assert apple.name == "Apple Inc."
@@ -32,7 +51,11 @@ def test_fetch_details_returns_one_record_per_id_even_when_missing():
     def handler(request):
         query = request.content.decode()
         calls.append(query)
-        return httpx.Response(200, text=details_body if "VALUES" in query else list_body)
+        if "VALUES" in query:
+            return httpx.Response(200, text=details_body)
+        # Only the first band returns rows, so each company is listed once.
+        first_band = "%3C%3D+2000" in query
+        return httpx.Response(200, text=list_body if first_band else '{"results":{"bindings":[]}}')
 
     client = wikidata.WikidataClient(httpx.Client(transport=httpx.MockTransport(handler)))
     ids = wikidata.list_qualifying_ids(client)
@@ -40,7 +63,7 @@ def test_fetch_details_returns_one_record_per_id_even_when_missing():
     assert sorted(r.source_id for r in recs) == sorted(ids)
     missing = [r for r in recs if r.source_id == "Q999999999"]
     assert missing[0].name is None
-    assert len(calls) == 3  # one list query, two detail batches
+    assert len(calls) == 7  # five band queries, two detail batches
 
 
 def test_query_retries_on_429(monkeypatch):

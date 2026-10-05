@@ -27,6 +27,10 @@ from portalfinder.records import CompanyRecord
 
 FIELDS = ("name", "employee_count", "linkedin_url", "website", "country", "industry")
 
+# More than any employer has (Walmart, the largest, has about 2.1 million).
+# Counts above this are data errors in the source.
+MAX_PLAUSIBLE_EMPLOYEES = 2_500_000
+
 
 class ReconciliationError(RuntimeError):
     pass
@@ -57,6 +61,10 @@ def _reject_reason(rec: CompanyRecord, min_employees: int) -> str | None:
         return "missing_employee_count"
     if rec.employee_count <= min_employees:
         return "below_employee_threshold"
+    if rec.employee_count > MAX_PLAUSIBLE_EMPLOYEES:
+        return "implausible_employee_count"
+    if rec.dissolved:
+        return "dissolved"
     return None
 
 
@@ -97,9 +105,22 @@ def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int) -
     reason = _reject_reason(rec, min_employees)
     if reason:
         run.rejected += 1
-        _event(conn, run.run_id, None, "rejected", {
+        existing = conn.execute(
+            "SELECT company_id FROM company_sources WHERE source = ? AND source_id = ?",
+            (rec.source, rec.source_id),
+        ).fetchone()
+        company_id = existing["company_id"] if existing else None
+        if company_id is not None:
+            # Loaded by an earlier run but no longer qualifies: keep the row so
+            # it stays visible, but take it out of discovery.
+            conn.execute(
+                "UPDATE companies SET status = 'excluded', status_reason = ?, updated_at = ?"
+                " WHERE id = ?", (reason, now(), company_id),
+            )
+        _event(conn, run.run_id, company_id, "rejected", {
             "reason": reason, "source": rec.source, "source_id": rec.source_id,
             "name": rec.name, "employee_count": rec.employee_count,
+            "dissolved": rec.dissolved,
         })
         return
 

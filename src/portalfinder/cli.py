@@ -30,9 +30,20 @@ def ingest_wikidata(
     """Load every Wikidata business above the employee threshold."""
     conn = connect(db)
     client = wikidata.WikidataClient()
-    ids = wikidata.list_qualifying_ids(client, min_employees)
+    ids = wikidata.list_qualifying_ids(
+        client, min_employees,
+        on_band=lambda lo, hi, n: typer.echo(
+            f"  employees {lo:,}-{hi:,}: {n} companies" if hi else f"  employees >{lo:,}: {n} companies"),
+    )
     typer.echo(f"Wikidata lists {len(ids)} qualifying companies; fetching details...")
-    records = wikidata.fetch_details(client, ids, batch_size)
+
+    def with_progress(records):
+        for i, rec in enumerate(records, 1):
+            if i % 1000 == 0:
+                typer.echo(f"  {i}/{len(ids)} fetched")
+            yield rec
+
+    records = with_progress(wikidata.fetch_details(client, ids, batch_size))
     run = ingest(conn, wikidata.SOURCE, records, min_employees)
     if run.seen != len(ids):
         typer.echo(f"expected {len(ids)} records, ingested {run.seen}", err=True)

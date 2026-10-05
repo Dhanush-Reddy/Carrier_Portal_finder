@@ -36,7 +36,8 @@ def build_report(conn: sqlite3.Connection) -> Report:
         rep.problems.append(f"unknown statuses: {sorted(unknown)}")
 
     no_reason = conn.execute(
-        "SELECT COUNT(*) FROM companies WHERE status IN ('needs_review', 'no_portal_found', 'failed')"
+        "SELECT COUNT(*) FROM companies WHERE status IN"
+        " ('needs_review', 'no_portal_found', 'failed', 'excluded')"
         " AND (status_reason IS NULL OR status_reason = '')"
     ).fetchone()[0]
     if no_reason:

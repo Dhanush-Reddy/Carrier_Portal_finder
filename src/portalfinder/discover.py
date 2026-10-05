@@ -28,7 +28,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import tldextract
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
-from portalfinder.ats import ats_tenant, detect_ats
+from portalfinder.ats import ats_tenant, clean_ats_url, detect_ats, is_asset, is_not_portal
 from portalfinder.db import log_event, now
 from portalfinder.terms import (
     EXCLUDED_HOSTS,
@@ -43,7 +43,11 @@ from portalfinder.web import Fetcher, FetchError, Page
 
 _extract = tldextract.TLDExtract(suffix_list_urls=())  # bundled list, no network
 
-MAX_EXTRA_PORTALS = 6
+# Extra portals kept per company, by scope. Regional pages are often many
+# (one per country) and all worth keeping; the others are capped tighter.
+SCOPE_CAPS = {"regional": 30, "graduate": 3, "affiliate": 5, "other": 3}
+# Link text longer than this is a job title or teaser, not a region label.
+MAX_REGION_TEXT = 60
 PROBE_PATHS = ("/careers", "/jobs", "/careers/", "/en/careers", "/about/careers",
                "/company/careers", "/karriere")
 PROBE_SUBDOMAINS = ("careers", "jobs")
@@ -122,7 +126,7 @@ def _excluded(url: str) -> bool:
 
 
 def is_careers_link(link: Link) -> bool:
-    if link.kind != "a" or _excluded(link.url):
+    if link.kind != "a" or _excluded(link.url) or is_asset(link.url) or is_not_portal(link.url):
         return False
     parts = urlsplit(link.url)
     return (
@@ -159,9 +163,10 @@ def link_score(link: Link) -> float:
 
 def classify_scope(link_text: str, url: str, company_domains: set[str]) -> tuple[str, str | None]:
     parts = urlsplit(url)
+    region_text = link_text if len(link_text) <= MAX_REGION_TEXT else ""
     if GRADUATE_RE.search(link_text) or GRADUATE_RE.search(parts.path.replace("-", " ")):
-        return "graduate", region_of(link_text, parts.path)
-    region = region_of(link_text, parts.path)
+        return "graduate", region_of(region_text, parts.path)
+    region = region_of(region_text, parts.path)
     if region:
         return "regional", region
     if company_domains and not detect_ats(url) and registrable_domain(url) not in company_domains:
@@ -170,15 +175,37 @@ def classify_scope(link_text: str, url: str, company_domains: set[str]) -> tuple
 
 
 def find_ats_link(parsed: ParsedPage) -> str | None:
-    """The best ATS link on a page: anchors about jobs first, then embeds."""
-    ats_links = [l for l in parsed.links if detect_ats(l.url)]
+    """The best link into an ATS on a page.
+
+    Job-search links beat sign-in, profile and single-job links; anchors beat
+    iframes and forms. Scripts and other static files are never portals.
+    """
+    ats_links = [
+        l for l in parsed.links
+        if l.kind != "script" and not is_asset(l.url) and detect_ats(l.url)
+    ]
     if not ats_links:
         return None
     ats_links.sort(key=lambda l: (
+        is_not_portal(l.url),
         l.kind != "a",
         not JOB_CONTENT_RE.search(l.text or "") and not has_career_text(l.text or ""),
     ))
     return ats_links[0].url
+
+
+def ats_from_scripts(parsed: ParsedPage) -> str | None:
+    """The ATS a careers site runs on, from the scripts it loads.
+
+    Hosted career sites (Phenom, SuccessFactors, Avature...) often sit on the
+    company's own domain and only reveal the provider through their scripts.
+    """
+    for link in parsed.links:
+        if link.kind == "script":
+            provider = detect_ats(link.url)
+            if provider:
+                return provider
+    return None
 
 
 @dataclass
@@ -195,6 +222,7 @@ class PortalFound:
     fetch_error: str | None = None
     ats_link: str | None = None  # the ATS link as found, before redirects
     final_page_url: str | None = None
+    ats_found_via: str | None = None  # page_url | link | page_scripts
 
     @property
     def confidence(self) -> float:
@@ -257,14 +285,26 @@ class CompanyDiscovery:
         parsed = parse(page)
         portal.page_title = parsed.title[:300]
         final_page_url = portal.final_page_url = page.url
-        ats_url = final_page_url if detect_ats(final_page_url) else find_ats_link(parsed)
+        ats_via = None
+        if detect_ats(final_page_url):
+            ats_url, ats_via = final_page_url, "page_url"
+        else:
+            ats_url = find_ats_link(parsed)
+            ats_via = "link" if ats_url else None
         if ats_url and ats_url != final_page_url:
             portal.ats_link = ats_url
             ats_page, ats_error = await self._fetch(ats_url)
-            if ats_page is not None and not ats_error:
+            if ats_page is not None and not ats_error and detect_ats(ats_page.url):
                 ats_url = ats_page.url
-        portal.final_ats_url = ats_url or final_page_url
-        portal.ats_provider = detect_ats(portal.final_ats_url)
+        if ats_url:
+            portal.final_ats_url = clean_ats_url(ats_url)
+            portal.ats_provider = detect_ats(portal.final_ats_url)
+        else:
+            # A hosted career site on the company's domain is itself the portal.
+            portal.final_ats_url = final_page_url
+            portal.ats_provider = ats_from_scripts(parsed)
+            ats_via = "page_scripts" if portal.ats_provider else None
+        portal.ats_found_via = ats_via
         portal.signals.update(
             ats_detected=portal.ats_provider is not None,
             on_company_domain=self._on_company_domain(final_page_url),
@@ -330,6 +370,10 @@ class CompanyDiscovery:
 
         main_parsed = await self._resolve(main, main_text)
         portals = [main]
+        # The main careers site is the company's own even when it has its own
+        # domain (amazon.jobs, verbund.edeka), so its pages are not affiliates.
+        if main.final_page_url and not detect_ats(main.final_page_url):
+            self.domains.add(registrable_domain(main.final_page_url))
 
         # Extra portals: from the homepage and the main careers page.
         seen = {normalize_url(u) for u in (main.career_page_url, main.final_ats_url, main.ats_link) if u}
@@ -339,6 +383,8 @@ class CompanyDiscovery:
         if main_parsed and not detect_ats(main.final_page_url):
             pool += [l for l in main_parsed.links if is_careers_link(l)]
         extras: list[tuple[Link, str, str | None]] = []
+        kept_paths: dict[str, list[str]] = {}
+        skipped: dict[str, int] = {}
         for link in pool:
             key = normalize_url(link.url)
             tenant = ats_tenant(link.url)
@@ -348,16 +394,24 @@ class CompanyDiscovery:
             if scope == "other" and not detect_ats(link.url):
                 continue  # e.g. /careers/benefits: part of the main site, not a portal
             seen.add(key)
+            # A page nested under one already kept for the same scope is a
+            # sub-page of it (e.g. /internships/finance under /internships).
+            if any(key.startswith(p + "/") for p in kept_paths.get(scope, [])):
+                continue
+            if sum(1 for _, s, _ in extras if s == scope) >= SCOPE_CAPS[scope]:
+                skipped[scope] = skipped.get(scope, 0) + 1
+                continue
             if tenant:
                 tenants.add(tenant)
+            kept_paths.setdefault(scope, []).append(key)
             extras.append((link, scope, region))
-        for link, scope, region in extras[:MAX_EXTRA_PORTALS]:
+        for link, scope, region in extras:
             portal = PortalFound(link.url, scope, region, discovered_via="careers_page_link",
                                  signals={"linked_from_official_site": True})
             await self._resolve(portal, link.text)
             portals.append(portal)
 
-        detail = {"extra_candidates_skipped": max(0, len(extras) - MAX_EXTRA_PORTALS)}
+        detail = {"extra_portals_over_cap": skipped} if skipped else {}
         if main.fetch_error:
             return DiscoveryResult(cid, "needs_review", "careers_page_unreachable",
                                    portals, {**detail, "error": main.fetch_error})
@@ -388,7 +442,8 @@ def save_result(conn: sqlite3.Connection, result: DiscoveryResult) -> None:
             " ON CONFLICT (company_id, career_page_url) DO NOTHING",
             (result.company_id, p.career_page_url, p.final_ats_url, p.ats_provider, p.scope,
              p.region, p.confidence, p.discovered_via, p.page_title, p.http_status,
-             json.dumps({"signals": p.signals, "fetch_error": p.fetch_error})),
+             json.dumps({"signals": p.signals, "fetch_error": p.fetch_error,
+                         "ats_found_via": p.ats_found_via})),
         )
     conn.execute(
         "UPDATE companies SET status = ?, status_reason = ?, updated_at = ? WHERE id = ?",

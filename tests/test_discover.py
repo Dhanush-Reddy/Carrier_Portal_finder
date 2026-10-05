@@ -64,6 +64,28 @@ SITE = {
     "https://careers.theta.com/": (403, "Forbidden", {}),
     "https://kappa.com/": (200, html("Kappa", '<a href="/careers">Careers</a>'), {}),
     "https://kappa.com/careers": (200, html("Kappa careers", "<p>Open roles</p>"), {}),
+    # Lambda: hosted (Phenom) career site that only shows the ATS in its
+    # scripts, plus links that are not portals (sign-in, job advert, PDF).
+    "https://lambda.com/": (200, html("Lambda", '<a href="https://careers.lambda.com/global/en/">Careers</a>'), {}),
+    "https://careers.lambda.com/global/en/": (200, html("Lambda careers",
+        '<script src="https://cdn.phenompeople.com/x/bluebird.min-1.0.js"></script>'
+        '<p>Search jobs</p>'
+        '<a href="/global/en/students-graduates">Students & graduates</a>'
+        '<a href="/global/en/students-graduates/internships">Internships</a>'
+        '<a href="/global/en/lambda-usa">Lambda USA careers</a>'
+        '<a href="/global/en/login">Sign in to careers</a>'
+        '<a href="/global/en/saved-jobs">Saved jobs</a>'
+        '<a href="/global/en/job/12345/Driver-India">Driver jobs India</a>'
+        '<a href="https://cdn.lambda.com/eeo.pdf">Careers EEO statement</a>'), {}),
+    "https://careers.lambda.com/global/en/students-graduates": (200, html("Graduates"), {}),
+    "https://careers.lambda.com/global/en/lambda-usa": (200, html("USA"), {}),
+    # Mu: careers site on its own domain, Workday sign-in link before the search link.
+    "https://mu.com/": (200, html("Mu", '<a href="https://mu.jobs/">Careers</a>'), {}),
+    "https://mu.jobs/": (200, html("Mu jobs",
+        '<a href="https://mu.wd1.myworkdayjobs.com/MuCareers/login?redirect=%2FMuCareers%2FuserHome">Sign in</a>'
+        '<a href="https://mu.wd1.myworkdayjobs.com/MuCareers">Search jobs</a>'
+        '<a href="/en/locations">Locations</a><a href="/en/teams">Teams</a>'), {}),
+    "https://mu.wd1.myworkdayjobs.com/MuCareers": (200, html("Mu Careers"), {}),
     # JS-only homepage.
     "https://iota.com/": (200, "<html><body><div id=root></div></body></html>", {}),
 }
@@ -97,6 +119,8 @@ COMPANIES = [
     ("Theta Holdings", "https://theta.com/"),
     ("Iota Co", "https://iota.com/"),
     ("Kappa Corp", "kappa.com"),  # no scheme, as some sources give it
+    ("Lambda Logistics", "https://lambda.com/"),
+    ("Mu Retail", "https://mu.com/"),
 ]
 
 
@@ -145,6 +169,8 @@ def test_every_company_gets_an_outcome(loaded):
         "Theta Holdings": ("needs_review", "careers_page_unreachable"),
         "Iota Co": ("no_portal_found", "no_links_in_html"),
         "Kappa Corp": ("discovered", None),
+        "Lambda Logistics": ("discovered", None),
+        "Mu Retail": ("discovered", None),
     }
     assert build_report(loaded).ok
     events = loaded.execute(
@@ -194,7 +220,7 @@ def test_rerun_replaces_portals_and_retries_selected_statuses(loaded):
     run(loaded)
     before = loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0]
     summary = run(loaded, statuses=("discovered", "failed"))
-    assert summary.selected == 6
+    assert summary.selected == 8
     assert loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0] == before
     assert build_report(loaded).ok
 
@@ -217,8 +243,8 @@ def test_unexpected_error_is_recorded_not_lost(loaded, monkeypatch):
 def test_export_has_one_row_per_portal(loaded, tmp_path):
     run(loaded)
     out = tmp_path / "out.csv"
-    # Acme 4 portals + Beta, Eta, Theta, Kappa 1 each + 5 companies without portals
-    assert export_csv(loaded, out) == 13
+    # Acme 4 + Lambda 3 + Beta, Eta, Theta, Kappa, Mu 1 each + 5 companies without portals
+    assert export_csv(loaded, out) == 17
 
 
 def test_link_score_prefers_main_careers_page():
@@ -269,3 +295,31 @@ def test_dead_host_is_not_probed_path_by_path(loaded):
     result = asyncio.run(go())
     assert (result.status, result.reason) == ("failed", "site_unreachable")
     assert not any(u.startswith("https://delta.example/careers") for u in requested)
+
+
+def test_hosted_career_site_uses_page_not_script_as_final_url(loaded):
+    run(loaded)
+    found = portals(loaded, "Lambda Logistics")
+    assert list(found) == [
+        "https://careers.lambda.com/global/en/",
+        "https://careers.lambda.com/global/en/students-graduates",
+        "https://careers.lambda.com/global/en/lambda-usa",
+    ]
+    main = found["https://careers.lambda.com/global/en/"]
+    assert (main["ats_provider"], main["final_ats_url"]) == ("Phenom", "https://careers.lambda.com/global/en/")
+    assert json.loads(main["evidence"])["ats_found_via"] == "page_scripts"
+    assert found["https://careers.lambda.com/global/en/lambda-usa"]["region"] == "USA"
+
+
+def test_search_link_beats_sign_in_and_own_domain_pages_are_not_affiliates(loaded):
+    run(loaded)
+    found = portals(loaded, "Mu Retail")
+    assert list(found) == ["https://mu.jobs/"]
+    assert found["https://mu.jobs/"]["final_ats_url"] == "https://mu.wd1.myworkdayjobs.com/MuCareers"
+
+
+def test_html_without_content_type_is_accepted():
+    from portalfinder.web import Page
+    assert Page("u", "u", 200, "<!DOCTYPE html><html></html>", "").ok
+    assert not Page("u", "u", 200, '{"a": 1}', "application/json").ok
+    assert not Page("u", "u", 404, "<html></html>", "text/html").ok

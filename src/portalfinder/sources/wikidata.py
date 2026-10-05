@@ -3,7 +3,9 @@
 Two steps, so that every qualifying company is accounted for:
 
 1. ``list_qualifying_ids`` asks for the IDs of every business with more than
-   ``MIN_EMPLOYEES`` employees (the maximum reported value is used).
+   ``MIN_EMPLOYEES`` employees (the maximum reported value is used). The
+   query is split into employee-count bands so no single query hits the
+   public endpoint's 60-second limit.
 2. ``fetch_details`` fetches the details for those IDs in small batches.
 
 Any ID from step 1 that comes back without details is still returned as a
@@ -30,21 +32,34 @@ BUSINESS = "wd:Q4830453"
 LIST_QUERY = """
 SELECT ?item (MAX(?emp) AS ?employees) WHERE {{
   ?item wdt:P1128 ?emp .
-  FILTER(?emp > {min_employees})
+  FILTER(?emp > {low}{high_filter})
   FILTER EXISTS {{ ?item wdt:P31/wdt:P279* {business} . }}
 }}
 GROUP BY ?item
 """
 
+# Upper bounds of the employee-count bands queried separately; the last band
+# is open-ended.
+BAND_EDGES = (2_000, 5_000, 10_000, 50_000)
+
+
+def employee_bands(min_employees: int) -> list[tuple[int, int | None]]:
+    """``(low, high]`` bands covering every count above ``min_employees``."""
+    edges = [e for e in BAND_EDGES if e > min_employees]
+    lows = [min_employees, *edges]
+    highs: list[int | None] = [*edges, None]
+    return list(zip(lows, highs))
+
 DETAILS_QUERY = """
 SELECT ?item ?itemLabel ?website ?countryLabel ?industryLabel ?linkedin
-       ?parent ?parentLabel WHERE {{
+       ?parent ?parentLabel ?dissolved WHERE {{
   VALUES ?item {{ {values} }}
   OPTIONAL {{ ?item wdt:P856 ?website . }}
   OPTIONAL {{ ?item wdt:P17 ?country . }}
   OPTIONAL {{ ?item wdt:P452 ?industry . }}
   OPTIONAL {{ ?item wdt:P4264 ?linkedin . }}
   OPTIONAL {{ ?item wdt:P749 ?parent . }}
+  OPTIONAL {{ ?item wdt:P576 ?dissolved . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,mul". }}
 }}
 """
@@ -86,17 +101,31 @@ class WikidataClient:
         raise RuntimeError("unreachable")
 
 
-def list_qualifying_ids(client: WikidataClient, min_employees: int = MIN_EMPLOYEES) -> dict[str, int]:
-    rows = client.query(LIST_QUERY.format(min_employees=min_employees, business=BUSINESS))
-    return parse_list(rows)
-
-
-def parse_list(rows: list[dict]) -> dict[str, int]:
+def list_qualifying_ids(
+    client: WikidataClient, min_employees: int = MIN_EMPLOYEES, on_band=None
+) -> dict[str, int]:
     out: dict[str, int] = {}
+    for low, high in employee_bands(min_employees):
+        high_filter = f" && ?emp <= {high}" if high is not None else ""
+        rows = client.query(LIST_QUERY.format(low=low, high_filter=high_filter, business=BUSINESS))
+        found = parse_list(rows, out)
+        if on_band:
+            on_band(low, high, found)
+    return out
+
+
+def parse_list(rows: list[dict], out: dict[str, int] | None = None) -> int:
+    """Add rows to ``out`` (QID -> max employees). Returns rows parsed.
+
+    A company with several reported counts can appear in more than one band;
+    the largest count wins.
+    """
+    out = {} if out is None else out
     for row in rows:
         qid = _qid(row["item"]["value"])
-        out[qid] = int(float(row["employees"]["value"]))
-    return out
+        count = int(float(row["employees"]["value"]))
+        out[qid] = max(count, out.get(qid, 0))
+    return len(rows)
 
 
 def parse_details(rows: list[dict], employees: dict[str, int]) -> dict[str, CompanyRecord]:
@@ -126,6 +155,9 @@ def parse_details(rows: list[dict], employees: dict[str, int]) -> dict[str, Comp
             v = _value(row, key)
             if v and v not in raw[field]:
                 raw[field].append(v)
+        dissolved = _value(row, "dissolved")
+        if dissolved and not rec.dissolved:
+            rec.dissolved = dissolved[:10]
         parent_uri = _value(row, "parent")
         if parent_uri:
             pid = _qid(parent_uri)
@@ -141,6 +173,7 @@ def parse_details(rows: list[dict], employees: dict[str, int]) -> dict[str, Comp
         rec.industry = "; ".join(raw["industries"]) or None
         rec.linkedin_url = linkedin_company_url(raw["linkedin_ids"][0]) if raw["linkedin_ids"] else None
         raw["parents"] = [{"id": p.source_id, "name": p.name} for p in rec.parents]
+        raw["dissolved"] = rec.dissolved
     return records
 
 

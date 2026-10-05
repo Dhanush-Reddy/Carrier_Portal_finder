@@ -39,7 +39,8 @@ GRADUATE_RE = re.compile(
     r"\b(graduates?|grad(?:uate)? programs?|early[ -]careers?|students?|campus|"
     r"universit(?:y|ies)|interns?|internships?|apprentices?|apprenticeships?|"
     r"trainees?|traineeships?|entry[ -]level|emerging talent|young professionals|"
-    r"nachwuchs|absolventen|praktik(?:um|a)|stagiaires?|alternance|becarios?|"
+    r"nachwuchs|absolventen|praktik(?:um|a)|ausbildung|duales studium|studierende|"
+    r"sch[uü]ler|werkstudent(?:en)?|stagiaires?|alternance|becarios?|"
     r"pr[aá]cticas|estagi[aá]rios?|新卒|校园招聘|校招)\b",
     re.IGNORECASE,
 )

@@ -33,14 +33,55 @@ LinkedIn company URLs come from sources that already carry them:
 
 ## Usage
 
-```bash
-pip install -e ".[dev]"
+Needs Python 3.11 or newer.
 
-portalfinder ingest-wikidata --db portalfinder.db   # needs access to query.wikidata.org
-portalfinder discover --db portalfinder.db --limit 50   # largest companies first
-portalfinder discover --db portalfinder.db --status failed   # retry the failures
-portalfinder report --db portalfinder.db            # exits 1 if anything doesn't reconcile
+### Install
+
+Windows (Command Prompt), from the repository folder:
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e .
+```
+
+macOS / Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
+
+Activate the virtual environment again in every new terminal. If the
+`portalfinder` command is not found, use `python -m portalfinder` instead;
+it takes the same arguments.
+
+### Run
+
+```
+portalfinder ingest-wikidata --db portalfinder.db
+portalfinder discover --db portalfinder.db --limit 50
+portalfinder report --db portalfinder.db
 portalfinder export --db portalfinder.db --out exports/companies.csv
+```
+
+1. `ingest-wikidata` loads the company list. It needs internet access to
+   query.wikidata.org and takes a few minutes; progress is printed.
+2. `discover` finds career portals, largest companies first. Leave out
+   `--limit` to process every company. Add `--status failed` (or
+   `--status no_portal_found`) to retry companies that ended in that status.
+3. `report` prints counts per status and exits with an error if any company
+   is unaccounted for.
+4. `export` writes the CSV: one row per portal, plus one row for each
+   company without a portal.
+
+Run `portalfinder <command> --help` for every option.
+
+### Tests
+
+```
+python -m pip install -e ".[dev]"
 pytest
 ```
 
@@ -55,13 +96,22 @@ For each company, largest first:
    `jobs.<domain>` and a few other common locations. A path that just
    redirects back to the homepage doesn't count.
 3. The best-ranked link is the **global** portal. On it, find the link or
-   embed into an ATS and follow redirects to get the **final ATS URL**.
+   embed into an ATS and follow redirects to get the **final ATS URL**,
+   reduced to the portal's entry point (a Workday sign-in redirect becomes
+   the career site, a Lever job advert becomes the company's board). Job
+   search links are preferred over sign-in or profile links. A hosted career
+   site on the company's own domain (common with Phenom, SuccessFactors and
+   Avature) is its own final URL; its provider is read from the scripts it
+   loads.
 4. Other careers links on the homepage or main careers page become extra
    portals when they are a **graduate** page (graduates, students, interns,
    apprentices...), a **regional** page (a country or region name), an
    **affiliate** site on another domain, or a different ATS tenant
-   (**other**). Pages like `/careers/benefits` are not portals. Up to 6
-   extras per company; any beyond that are counted in the event log.
+   (**other**). Pages like `/careers/benefits`, sign-in and account pages,
+   single job adverts and PDFs are not portals, and sub-pages of a portal
+   already kept are skipped. Per company: up to 30 regional, 5 affiliate,
+   3 graduate and 3 other extras; any beyond that are counted in the event
+   log.
 
 Robots.txt is respected and requests identify themselves with a
 `portalfinder/0.1` user agent.
@@ -80,6 +130,7 @@ portal in `career_portals.evidence`.
 | `needs_review` | `careers_page_unreachable`: careers link found but the page blocks or errors (often bot protection) |
 | `no_portal_found` | `no_website`, `no_careers_link`, `no_links_in_html` (JavaScript-only site, needs the browser fallback) |
 | `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `http_<code>`, `internal_error` |
+| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error) |
 
 Re-running discovery for a company replaces its auto-discovered portals;
 portals with `discovered_via = 'manual'` are kept.

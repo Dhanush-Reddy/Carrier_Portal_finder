@@ -12,7 +12,8 @@ from portalfinder.sources import wikidata
 
 
 def wikidata_records():
-    ids = wikidata.parse_list(load_fixture("wikidata_list.json"))
+    ids = {}
+    wikidata.parse_list(load_fixture("wikidata_list.json"), ids)
     found = wikidata.parse_details(load_fixture("wikidata_details.json"), ids)
     return list(wikidata.complete_batch(sorted(ids), found, ids))
 
@@ -98,3 +99,32 @@ def test_export_lists_companies_without_portals(conn, tmp_path):
     rows = list(csv.DictReader(out.open()))
     assert {r["company_name"] for r in rows} == {"Apple Inc.", "Google", "Alphabet Inc."}
     assert [r["parent_companies"] for r in rows if r["company_name"] == "Google"][0] == "Alphabet Inc."
+
+
+@pytest.mark.parametrize("record,reason", [
+    (CompanyRecord("wikidata", "Q1", "Cegep", 6_884_496), "implausible_employee_count"),
+    (CompanyRecord("wikidata", "Q2", "Old Railways", 1_581_000, dissolved="1945-05-08"), "dissolved"),
+])
+def test_bad_source_data_is_rejected_with_reason(conn, record, reason):
+    run = ingest(conn, "wikidata", [record])
+    assert run.rejected == 1
+    detail = json.loads(conn.execute("SELECT detail FROM pipeline_events").fetchone()["detail"])
+    assert detail["reason"] == reason
+
+
+def test_company_that_stops_qualifying_is_excluded_not_deleted(conn):
+    ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q9", "RAO UES", 577000)])
+    run = ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q9", "RAO UES", 577000,
+                                                  dissolved="2008-07-01")])
+    assert run.rejected == 1
+    row = conn.execute("SELECT status, status_reason FROM companies").fetchone()
+    assert (row["status"], row["status_reason"]) == ("excluded", "dissolved")
+    assert build_report(conn).ok
+
+
+def test_wikidata_dissolved_date_is_read():
+    rows = [{"item": {"value": "http://www.wikidata.org/entity/Q5"},
+             "itemLabel": {"value": "Deutsche Reichsbahn"},
+             "dissolved": {"value": "1945-01-01T00:00:00Z"}}]
+    rec = wikidata.parse_details(rows, {"Q5": 1581000})["Q5"]
+    assert rec.dissolved == "1945-01-01"
