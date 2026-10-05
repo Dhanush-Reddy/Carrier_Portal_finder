@@ -90,6 +90,17 @@ portalfinder export --db portalfinder.db --out exports/companies.csv
    Country names are the ones in the `country` column (any case);
    `portalfinder countries --db portalfinder.db` lists them with counts.
 
+   The `sector` column is `it` for IT companies (software, IT services and
+   consulting, internet, cloud, cybersecurity, computer hardware,
+   semiconductors, video games), judged from the industry. `--sector it`
+   keeps only those, and `--per-company` writes one row per company: its
+   main careers page and ATS, with its other careers pages in one column.
+   For a list of IT companies to load into another tool:
+
+   ```
+   portalfinder export --db portalfinder.db --out exports/it_companies.csv --sector it --type company --per-company
+   ```
+
 Run `portalfinder <command> --help` for every option.
 
 ### Tests

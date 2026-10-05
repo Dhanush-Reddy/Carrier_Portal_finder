@@ -11,7 +11,7 @@ import typer
 from portalfinder import MIN_EMPLOYEES
 from portalfinder.db import STATUSES, connect
 from portalfinder.discover import discover_all
-from portalfinder.export import ORG_TYPE_NAMES, export_csv
+from portalfinder.export import ORG_TYPE_NAMES, SECTOR_NAMES, export_csv
 from portalfinder.ingest import ingest
 from portalfinder.report import build_report
 from portalfinder.sources import wikidata
@@ -134,13 +134,23 @@ def export(
     org_type: list[str] = typer.Option(
         None, "--type",
         help=f"Only this organisation type (repeatable): {', '.join(ORG_TYPE_NAMES)}."),
+    sector: list[str] = typer.Option(
+        None, "--sector", help=f"Only this sector (repeatable): {', '.join(SECTOR_NAMES)}."),
+    per_company: bool = typer.Option(
+        False, "--per-company",
+        help="One row per company (main portal plus a list of the others) instead of one per portal."),
 ):
     """Write a CSV with one row per career portal (and one per company without any)."""
     bad = {t.lower() for t in org_type or []} - set(ORG_TYPE_NAMES)
     if bad:
         typer.echo(f"unknown type: {', '.join(sorted(bad))}; use {', '.join(ORG_TYPE_NAMES)}", err=True)
         raise typer.Exit(2)
-    n = export_csv(connect(db), out, countries=country or None, org_types=org_type or None)
+    bad = {s.lower() for s in sector or []} - set(SECTOR_NAMES)
+    if bad:
+        typer.echo(f"unknown sector: {', '.join(sorted(bad))}; use {', '.join(SECTOR_NAMES)}", err=True)
+        raise typer.Exit(2)
+    n = export_csv(connect(db), out, countries=country or None, org_types=org_type or None,
+                   sectors=sector or None, per_company=per_company)
     typer.echo(f"Wrote {n} rows to {out}")
     if country and n == 0:
         typer.echo("No companies matched; see `portalfinder countries` for the names used.", err=True)
