@@ -101,7 +101,8 @@ def _add_parents(conn, company_id: int, rec: CompanyRecord) -> None:
         )
 
 
-def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int) -> None:
+def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int,
+                merge_on_domain: bool = False) -> None:
     reason = _reject_reason(rec, min_employees)
     if reason:
         run.rejected += 1
@@ -145,11 +146,21 @@ def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int) -
         )
         run.updated += 1
     else:
-        match = None
+        match, matched_on = None, "linkedin_url"
         if values["linkedin_url"]:
             match = conn.execute(
                 "SELECT id FROM companies WHERE linkedin_url = ?", (values["linkedin_url"],)
             ).fetchone()
+        if not match and merge_on_domain and values["website_domain"]:
+            # A broad source (PDL) against a company already loaded without a
+            # LinkedIn URL: same website, and only one candidate.
+            candidates = conn.execute(
+                "SELECT id FROM companies WHERE website_domain = ? AND status != 'excluded'"
+                " AND (linkedin_url IS NULL OR linkedin_url = ?)",
+                (values["website_domain"], values["linkedin_url"]),
+            ).fetchall()
+            if len(candidates) == 1:
+                match, matched_on = candidates[0], "website_domain"
         if match:
             company_id = match["id"]
             # Fill gaps only; keep the larger employee count.
@@ -165,7 +176,7 @@ def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int) -
             )
             run.merged += 1
             _event(conn, run.run_id, company_id, "merged", {
-                "matched_on": "linkedin_url", "source": rec.source, "source_id": rec.source_id,
+                "matched_on": matched_on, "source": rec.source, "source_id": rec.source_id,
             })
         else:
             cols = ", ".join(values)
@@ -208,14 +219,17 @@ def ingest(
     source: str,
     records: Iterable[CompanyRecord],
     min_employees: int = MIN_EMPLOYEES,
+    merge_on_domain: bool = False,
 ) -> RunSummary:
+    """Load ``records``; ``merge_on_domain`` also merges a record into the one
+    company with the same website domain and no other LinkedIn URL."""
     cur = conn.execute(
         "INSERT INTO ingest_runs (source, started_at) VALUES (?, ?)", (source, now())
     )
     run = RunSummary(run_id=cur.lastrowid)
     for rec in records:
         run.seen += 1
-        _ingest_one(conn, run, rec, min_employees)
+        _ingest_one(conn, run, rec, min_employees, merge_on_domain)
     link_parents(conn)
     conn.execute(
         "UPDATE ingest_runs SET finished_at = ?, records_seen = ?, records_inserted = ?,"
