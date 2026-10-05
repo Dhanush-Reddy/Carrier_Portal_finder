@@ -64,6 +64,9 @@ GRADUATE_URL_RE = re.compile(
     re.IGNORECASE)
 # ATS tenants used for testing, never the live portal.
 SANDBOX_RE = re.compile(r"sandbox|staging|[-.]uat[-.]|[-.]test[-.]|preprod", re.IGNORECASE)
+# First path segments of ATS script URLs that are not a company's board
+# (apply.app.jobvite.com/assets/...).
+NOT_TENANTS = {"", "embed", "assets", "static", "js", "css", "cdn", "scripts", "widget", "widgets", "api"}
 PROBE_PATHS = ("/careers", "/jobs", "/en/careers", "/career", "/about/careers",
                "/about-us/careers", "/company/careers", "/en/about/careers", "/join-us",
                "/work-with-us", "/en/jobs", "/recruit", "/karriere")
@@ -224,6 +227,13 @@ def classify_scope(link_text: str, url: str, company_domains: set[str]) -> tuple
     return "other", None
 
 
+def _shared_path(url: str) -> bool:
+    """A provider-wide path such as apply.app.jobvite.com/assets, not a board."""
+    tenant = ats_tenant(url) or ""
+    return (detect_ats(url) in PATH_TENANT_PROVIDERS
+            and tenant.split(":", 1)[1] in NOT_TENANTS - {""})
+
+
 def find_ats_link(parsed: ParsedPage, company_name: str = "") -> str | None:
     """The best link into an ATS on a page.
 
@@ -239,7 +249,7 @@ def find_ats_link(parsed: ParsedPage, company_name: str = "") -> str | None:
     ats_links = [
         l for l in parsed.links
         if l.kind != "script" and not is_asset(l.url) and detect_ats(l.url)
-        and not SANDBOX_RE.search(l.url)
+        and not SANDBOX_RE.search(l.url) and not _shared_path(l.url)
     ]
     if not ats_links:
         return None
@@ -284,7 +294,7 @@ def ats_from_scripts(parsed: ParsedPage) -> tuple[str, str | None] | None:
                 board = None
                 if provider in PATH_TENANT_PROVIDERS:
                     tenant = ats_tenant(link.url) or ""
-                    if tenant.split(":", 1)[1] not in ("", "embed"):
+                    if tenant.split(":", 1)[1] not in NOT_TENANTS:
                         board = clean_ats_url(link.url)
                 return provider, board
     return None

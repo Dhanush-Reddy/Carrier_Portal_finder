@@ -112,9 +112,11 @@ NOT_PORTAL_RE = re.compile(
     # Recruitment-fraud warnings, blog posts, news, employee stories, equal
     # opportunity statements and career advice are linked from many careers
     # pages but are not portals.
-    r"fraud|scam|phishing|recruitment-notice|[/-]blogs?/|/news/|/press/|press-releases?|"
+    r"fraud|scam|phishing|recruitment-notice|[/-]blogs?/|/news[/-]|newsflash|/press/|press-releases?|"
     r"communiques|/magazine/|/articles?/|^stories\.|\.stories\.|/stories/|/meet-|"
-    r"(?:^|[/_-])(?:eoe|eeo)|career-(?:resources|advice|coaching|tips)|toolkit)",
+    r"(?:^|[/_-])(?:eoe|eeo)|career-(?:resources|advice|coaching|tips)|toolkit|right-to-work|"
+    # Legal pages.
+    r"privacy|datenschutz|cookie|impressum|imprint|terms-of-use|terms-and-conditions)",
     re.IGNORECASE,
 )
 # A path segment this many words long is an article slug
