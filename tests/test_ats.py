@@ -105,6 +105,10 @@ def test_strip_tracking():
     "https://www.randstad.ca/job-seeker/career-resources/",
     "https://www.randstad.com.au/job-seekers/job-seeker-toolkit/",
     "https://www.randstadenterprise.com/solutions/talent-development/career-coaching",
+    # Seen in the fourth run.
+    "https://db.jobs/de-de/privacy-policy-db-de-en-10637340",
+    "https://www.asda.jobs/right-to-work-uk",
+    "http://www.credit-agricole.com/en/news-channels/the-channels/newsflash/credibom-improve-career",
 ])
 def test_fraud_notices_blogs_and_news_are_not_portals(url):
     assert is_not_portal(url)

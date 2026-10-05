@@ -536,3 +536,13 @@ def test_rate_limited_page_is_retried_once():
             await f.aclose()
 
     assert asyncio.run(go()) == (200, 2)
+
+
+def test_ats_script_assets_are_not_a_board():
+    from portalfinder.discover import ParsedPage, ats_from_scripts
+    page = ParsedPage("Careers", [
+        Link("https://apply.app.jobvite.com/assets/js/widget.js", "", "script")], "")
+    assert ats_from_scripts(page) == ("Jobvite", None)
+    from portalfinder.discover import find_ats_link
+    page.links.append(Link("https://apply.app.jobvite.com/assets/images", "Search jobs", "iframe"))
+    assert find_ats_link(page, "HCA Healthcare") is None
