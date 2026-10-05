@@ -214,6 +214,9 @@ def test_export_filters_by_country_and_type(tmp_path):
     ("information technology and services", "it"),  # LinkedIn-style labels
     ("computer software", "it"),
     ("internet", "it"),
+    ("IT System Custom Software Development", "it"),
+    ("Technology, Information and Internet", "it"),
+    ("Data Infrastructure and Analytics", "it"),
     ("medical technology industry", ""),
     ("energy technology", ""),
     ("internet television", ""),

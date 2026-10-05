@@ -83,7 +83,7 @@ ORG_TYPE_NAMES = ("company",) + tuple(label for label, _, _ in ORG_TYPES)
 # an IT company. Matched per industry, so "medical technology" or "energy
 # technology" don't count.
 IT_INDUSTRY_RE = re.compile(
-    r"software|information technology|^it (?:service|infrastructure|systems)|"
+    r"software|information technology|^it\b|technology, information|data infrastructure|"
     r"computer(?! simulation| science)|computing|^internet(?: industry)?$|cloud|"
     r"web (?:hosting|service)|data (?:processing|analytics)|cyber|information security|"
     r"semiconductor|microelectronics|video game|artificial intelligence|networking hardware|"

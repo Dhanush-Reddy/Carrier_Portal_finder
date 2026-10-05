@@ -17,6 +17,7 @@ run is reconciled so the counts must add up.
 | Reconciliation report, CSV export | Done |
 | Career portal discovery (careers links, ATS, graduate/regional/affiliate portals, confidence) | Done |
 | Verification through ATS job APIs (Workday, Greenhouse, Lever, SmartRecruiters) | Next |
+| LinkedIn company details through your own LinkedIn MCP server | Done |
 | People Data Labs free dataset ingest | Next |
 | Headless-browser fallback for JavaScript-only sites, search-API fallback | Planned |
 
@@ -102,6 +103,45 @@ portalfinder export --db portalfinder.db --out exports/companies.csv
    ```
 
 Run `portalfinder <command> --help` for every option.
+
+### Adding companies through your LinkedIn MCP server
+
+Wikidata misses many large IT companies (Wipro, HCLTech, Zoho...). If you
+have a LinkedIn MCP server set up in Claude Desktop or Claude Code,
+`linkedin-fetch` starts it the same way, looks each company up, and writes
+`exports/linkedin_companies.csv` (name, LinkedIn URL, website, industry,
+employee band, headquarters, country, founded). It runs on your computer,
+as your LinkedIn account.
+
+```bat
+python -m pip install -e ".[linkedin]"
+portalfinder mcp-tools --mcp-config "%APPDATA%\Claude\claude_desktop_config.json"
+portalfinder linkedin-fetch --mcp-config "%APPDATA%\Claude\claude_desktop_config.json" --db portalfinder.db --ingest
+portalfinder discover --db portalfinder.db
+portalfinder export --db portalfinder.db --out exports/it_companies.csv --sector it --type company --per-company
+```
+
+- The config is Claude Desktop's `claude_desktop_config.json` (on Windows in
+  `%APPDATA%\Claude`), or Claude Code's `%USERPROFILE%\.claude.json` or a
+  project's `.mcp.json`. The server whose name contains "linkedin" is used;
+  pick another with `--server`, or give the command that starts it with
+  `--mcp-command`.
+- `mcp-tools` lists the server's tools. The company-profile tool and its
+  input are found automatically; if not, name them with `--tool` and `--arg`.
+- Without `--input`, the bundled list of about 65 large IT companies that
+  Wikidata misses is looked up. `--input my_companies.csv` (columns `name`,
+  `linkedin_url`, optional `website`, `country`) looks up your own list.
+  `--from-db --missing-industry` looks up the database's companies whose
+  industry is unknown, so the IT filter can see them.
+- `--ingest` adds the companies to the database (matched with Wikidata ones
+  by LinkedIn URL). Employee counts are the lower end of LinkedIn's band
+  (10,001+ becomes 10001). Companies under 1,000 employees are rejected
+  with a logged reason.
+- LinkedIn restricts accounts that read many pages quickly, so calls are
+  about 20 seconds apart (`--delay`), a run makes at most 150 calls
+  (`--limit`), and it stops at once if the server reports a rate limit,
+  a challenge or a sign-in problem. Answers are cached in `linkedin_cache`;
+  run the same command again later to continue where it stopped.
 
 ### Tests
 
