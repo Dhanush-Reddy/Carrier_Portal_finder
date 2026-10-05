@@ -204,3 +204,58 @@ def test_export_filters_by_country_and_type(tmp_path):
     assert runner.invoke(app, ["export", "--db", str(db), "--type", "shop"]).exit_code == 2
     listed = runner.invoke(app, ["countries", "--db", str(db)])
     assert "India" in listed.output and "Germany" in listed.output
+
+
+@pytest.mark.parametrize("industry,expected", [
+    ("IT service management; information technology consulting", "it"),
+    ("software industry", "it"),
+    ("retail; web service; e-commerce; web hosting service", "it"),
+    ("semiconductor industry", "it"),
+    ("information technology and services", "it"),  # LinkedIn-style labels
+    ("computer software", "it"),
+    ("internet", "it"),
+    ("IT System Custom Software Development", "it"),
+    ("Technology, Information and Internet", "it"),
+    ("Data Infrastructure and Analytics", "it"),
+    ("medical technology industry", ""),
+    ("energy technology", ""),
+    ("internet television", ""),
+    ("retail", ""),
+    (None, ""),
+])
+def test_sector(industry, expected):
+    from portalfinder.export import sector
+    assert sector(industry) == expected
+
+
+def test_export_it_companies_one_row_each(tmp_path):
+    from typer.testing import CliRunner
+    from portalfinder.cli import app
+    from portalfinder.db import connect
+    db = tmp_path / "t.db"
+    conn = connect(db)
+    ingest(conn, "test", [
+        CompanyRecord("test", "1", "Infosys", 300000, country="India", industry="IT service management"),
+        CompanyRecord("test", "2", "Tata Steel", 70000, country="India", industry="iron and steel industry"),
+    ])
+    cid = conn.execute("SELECT id FROM companies WHERE name = 'Infosys'").fetchone()[0]
+    for scope, url in (("global", "https://www.infosys.com/careers/"),
+                       ("graduate", "https://www.infosys.com/careers/graduates.html"),
+                       ("regional", "https://www.infosys.com/careers/us.html")):
+        conn.execute("INSERT INTO career_portals (company_id, career_page_url, scope, discovered_via)"
+                     " VALUES (?, ?, ?, 'manual')", (cid, url, scope))
+    conn.commit()
+    out = tmp_path / "it.csv"
+    assert export_csv(conn, out, sectors=["it"]) == 3
+    assert export_csv(conn, out, sectors=["it"], per_company=True) == 1
+    [row] = list(csv.DictReader(out.open()))
+    assert row["company_name"] == "Infosys" and row["sector"] == "it"
+    assert row["career_page_url"] == "https://www.infosys.com/careers/"
+    assert row["other_career_pages"] == (
+        "https://www.infosys.com/careers/graduates.html | https://www.infosys.com/careers/us.html")
+    runner = CliRunner()
+    result = runner.invoke(app, ["export", "--db", str(db), "--out", str(out),
+                                 "--sector", "it", "--per-company", "--country", "India"])
+    assert result.exit_code == 0, result.output
+    assert "Wrote 1 rows" in result.output
+    assert runner.invoke(app, ["export", "--db", str(db), "--sector", "farming"]).exit_code == 2
