@@ -12,7 +12,8 @@ from portalfinder.sources import wikidata
 
 
 def wikidata_records():
-    ids = wikidata.parse_list(load_fixture("wikidata_list.json"))
+    ids = {}
+    wikidata.parse_list(load_fixture("wikidata_list.json"), ids)
     found = wikidata.parse_details(load_fixture("wikidata_details.json"), ids)
     return list(wikidata.complete_batch(sorted(ids), found, ids))
 

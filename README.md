@@ -33,14 +33,55 @@ LinkedIn company URLs come from sources that already carry them:
 
 ## Usage
 
-```bash
-pip install -e ".[dev]"
+Needs Python 3.11 or newer.
 
-portalfinder ingest-wikidata --db portalfinder.db   # needs access to query.wikidata.org
-portalfinder discover --db portalfinder.db --limit 50   # largest companies first
-portalfinder discover --db portalfinder.db --status failed   # retry the failures
-portalfinder report --db portalfinder.db            # exits 1 if anything doesn't reconcile
+### Install
+
+Windows (Command Prompt), from the repository folder:
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e .
+```
+
+macOS / Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
+
+Activate the virtual environment again in every new terminal. If the
+`portalfinder` command is not found, use `python -m portalfinder` instead;
+it takes the same arguments.
+
+### Run
+
+```
+portalfinder ingest-wikidata --db portalfinder.db
+portalfinder discover --db portalfinder.db --limit 50
+portalfinder report --db portalfinder.db
 portalfinder export --db portalfinder.db --out exports/companies.csv
+```
+
+1. `ingest-wikidata` loads the company list. It needs internet access to
+   query.wikidata.org and takes a few minutes; progress is printed.
+2. `discover` finds career portals, largest companies first. Leave out
+   `--limit` to process every company. Add `--status failed` (or
+   `--status no_portal_found`) to retry companies that ended in that status.
+3. `report` prints counts per status and exits with an error if any company
+   is unaccounted for.
+4. `export` writes the CSV: one row per portal, plus one row for each
+   company without a portal.
+
+Run `portalfinder <command> --help` for every option.
+
+### Tests
+
+```
+python -m pip install -e ".[dev]"
 pytest
 ```
 
