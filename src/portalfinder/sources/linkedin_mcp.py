@@ -43,6 +43,10 @@ STOP_RE = re.compile(
     r"log ?in|sign ?in|session|cookie|auth|unauthori[sz]ed|forbidden|blocked|restricted",
     re.IGNORECASE)
 MAX_CONSECUTIVE_ERRORS = 3
+# stickerdaniel/linkedin-mcp-server reports a rate limit inside a normal
+# answer: section_errors {"error_type": "rate_limit", ...} and a "[Rate
+# limited]" placeholder text.
+RATE_LIMITED_RE = re.compile(r'"error_type"\s*:\s*"rate_limit"|\[Rate limited\]', re.IGNORECASE)
 
 
 class McpSetupError(RuntimeError):
@@ -68,11 +72,17 @@ def _find_servers(node) -> dict[str, dict]:
 
 
 def load_server(config_path: str | Path, name: str | None = None) -> dict:
-    """The server entry from a Claude Desktop / Claude Code MCP config.
+    """The server entry from a Claude Desktop / Claude Code MCP config, or
+    job-hunt's ``data/mcp-connections.json``.
 
     Without ``name``, the one entry with "linkedin" in its name is used.
     """
-    servers = _find_servers(json.loads(Path(config_path).read_text(encoding="utf-8")))
+    data = json.loads(Path(config_path).read_text(encoding="utf-8-sig"))
+    servers = _find_servers(data)
+    if not servers and isinstance(data, dict):
+        # job-hunt's data/mcp-connections.json lists servers at the top level.
+        servers = {k: v for k, v in data.items()
+                   if isinstance(v, dict) and (v.get("command") or v.get("url"))}
     if not servers:
         raise McpSetupError(f"no mcpServers in {config_path}")
     if name:
@@ -292,10 +302,14 @@ def employee_band(text: str | None) -> tuple[str | None, int | None]:
 def parse_company(text: str) -> dict:
     """Company details from a tool's answer, JSON or LinkedIn page text."""
     found: dict[str, object] = {}
+    texts = []
     for chunk in _json_chunks(text):
         _walk(chunk, found)
+        texts.extend(_strings(chunk))
     details = {k: _as_text(v) for k, v in found.items()}
-    lines = [ln.strip() for ln in text.replace("\\n", "\n").splitlines()]
+    # A JSON answer carries the page text in its string values, e.g.
+    # {"url": ..., "sections": {"about": "Overview\n...Industry\nIT Services..."}}.
+    lines = [ln.strip() for t in (texts or [text]) for ln in t.splitlines()]
     for field, label in TEXT_FIELDS.items():
         if details.get(field):
             continue
@@ -314,6 +328,17 @@ def parse_company(text: str) -> dict:
     details["employee_count"] = count
     details.pop("company_size", None)
     return details
+
+
+def _strings(node) -> Iterable[str]:
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _strings(item)
 
 
 def _json_chunks(text: str) -> Iterable:
@@ -451,6 +476,8 @@ async def fetch_companies(
                     text = result_text(result)
                     if getattr(result, "isError", False):
                         error, text = text or "tool error", None
+                    elif RATE_LIMITED_RE.search(text):
+                        error, text = "LinkedIn rate limit reported by the server", None
                 except Exception as exc:  # the server's failure, reported per company
                     error = f"{type(exc).__name__}: {exc}"
                 if text is not None:

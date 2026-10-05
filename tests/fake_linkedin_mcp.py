@@ -21,11 +21,34 @@ ABOUT = {
 }
 
 
+# The shape stickerdaniel/linkedin-mcp-server returns: raw page text per section.
+STICKERDANIEL = {
+    "tcs": {
+        "url": "https://www.linkedin.com/company/tata-consultancy-services/",
+        "sections": {"about": (
+            "Overview\nA global leader in IT services.\nWebsite\nhttp://www.tcs.com\n"
+            "External link for Tata Consultancy Services\nIndustry\nIT Services and IT Consulting\n"
+            "Company size\n10,001+ employees\n601,546 associated members\n"
+            "Headquarters\nMumbai, Maharashtra\nFounded\n1968")},
+        "references": {"about": [{"kind": "company_urn", "value": "1353"}]},
+    },
+    "soft-limited": {
+        "url": "https://www.linkedin.com/company/soft-limited/",
+        "sections": {},
+        "section_errors": {"about": {
+            "error_type": "rate_limit",
+            "error_message": "[Rate limited] LinkedIn blocked this section. Try again later."}},
+    },
+}
+
+
 @server.tool()
-def get_company_profile(company_name: str) -> str:
+def get_company_profile(company_name: str, sections: str | None = None) -> dict | str:
     """Company profile by LinkedIn slug."""
     if company_name == "throttled":
         raise RuntimeError("LinkedIn rate limit reached, try later")
+    if company_name in STICKERDANIEL:
+        return STICKERDANIEL[company_name]
     return ABOUT.get(company_name, "This page doesn't exist")
 
 

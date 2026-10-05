@@ -123,7 +123,8 @@ portalfinder export --db portalfinder.db --out exports/it_companies.csv --sector
 
 - The config is Claude Desktop's `claude_desktop_config.json` (on Windows in
   `%APPDATA%\Claude`), or Claude Code's `%USERPROFILE%\.claude.json` or a
-  project's `.mcp.json`. The server whose name contains "linkedin" is used;
+  project's `.mcp.json`, or job-hunt's `data\mcp-connections.json` (which
+  reuses job-hunt's signed-in LinkedIn session). The server whose name contains "linkedin" is used;
   pick another with `--server`, or give the command that starts it with
   `--mcp-command`.
 - `mcp-tools` lists the server's tools. The company-profile tool and its
