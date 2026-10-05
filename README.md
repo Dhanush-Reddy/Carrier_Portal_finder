@@ -68,9 +68,11 @@ portalfinder export --db portalfinder.db --out exports/companies.csv
 
 1. `ingest-wikidata` loads the company list. It needs internet access to
    query.wikidata.org and takes a few minutes; progress is printed.
-2. `discover` finds career portals, largest companies first. Leave out
-   `--limit` to process every company. Add `--status failed` (or
-   `--status no_portal_found`) to retry companies that ended in that status.
+2. `discover` finds career portals for companies not processed yet,
+   largest first. Leave out `--limit` to process every company. Add
+   `--status failed` (or `--status no_portal_found`) to retry companies that
+   ended in that status, or `--all` to redo every company that isn't
+   excluded (useful after updating the tool; combine with `--limit`).
 3. `report` prints counts per status and exits with an error if any company
    is unaccounted for.
 4. `export` writes the CSV: one row per portal, plus one row for each
@@ -92,9 +94,10 @@ For each company, largest first:
 1. Fetch the official homepage and collect careers links (link text or URL
    with careers wording in about 20 languages, or a link straight into an ATS).
    LinkedIn, Indeed, Glassdoor and other third-party job boards are ignored.
-2. With no careers link, try `/careers`, `/jobs`, `careers.<domain>`,
-   `jobs.<domain>` and a few other common locations. A path that just
-   redirects back to the homepage doesn't count.
+2. With no careers link, look for careers pages in the site's sitemap
+   (declared in robots.txt, or `/sitemap.xml`), then try `/careers`, `/jobs`,
+   `careers.<domain>`, `jobs.<domain>` and other common locations. A path
+   that just redirects back to the homepage doesn't count.
 3. The best-ranked link is the **global** portal. On it, find the link or
    embed into an ATS and follow redirects to get the **final ATS URL**,
    reduced to the portal's entry point (a Workday sign-in redirect becomes
@@ -108,8 +111,10 @@ For each company, largest first:
    apprentices...), a **regional** page (a country or region name), an
    **affiliate** site on another domain, or a different ATS tenant
    (**other**). Pages like `/careers/benefits`, sign-in and account pages,
-   single job adverts and PDFs are not portals, and sub-pages of a portal
-   already kept are skipped. Per company: up to 30 regional, 5 affiliate,
+   single job adverts, PDFs, recruitment-fraud warnings, blog and news posts,
+   government sites and third-party boards (LinkedIn, Indeed, Handshake...)
+   are not portals, and sub-pages of a portal already kept are skipped.
+   Tracking parameters (`utm_*`, `_ga`, `gclid`...) are removed from URLs. Per company: up to 30 regional, 5 affiliate,
    3 graduate and 3 other extras; any beyond that are counted in the event
    log.
 
@@ -130,7 +135,7 @@ portal in `career_portals.evidence`.
 | `needs_review` | `careers_page_unreachable`: careers link found but the page blocks or errors (often bot protection) |
 | `no_portal_found` | `no_website`, `no_careers_link`, `no_links_in_html` (JavaScript-only site, needs the browser fallback) |
 | `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `http_<code>`, `internal_error` |
-| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error) |
+| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error). Auto-discovered portals are removed; the company row stays. |
 
 Re-running discovery for a company replaces its auto-discovered portals;
 portals with `discovered_via = 'manual'` are kept.

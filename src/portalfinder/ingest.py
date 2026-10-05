@@ -117,6 +117,10 @@ def _ingest_one(conn, run: RunSummary, rec: CompanyRecord, min_employees: int) -
                 "UPDATE companies SET status = 'excluded', status_reason = ?, updated_at = ?"
                 " WHERE id = ?", (reason, now(), company_id),
             )
+            conn.execute(
+                "DELETE FROM career_portals WHERE company_id = ? AND discovered_via != 'manual'",
+                (company_id,),
+            )
         _event(conn, run.run_id, company_id, "rejected", {
             "reason": reason, "source": rec.source, "source_id": rec.source_id,
             "name": rec.name, "employee_count": rec.employee_count,

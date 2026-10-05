@@ -60,11 +60,17 @@ def discover(
     status: list[str] = typer.Option(
         ["pending"], help="Process companies in this status (repeatable), e.g. --status failed."
     ),
+    all_: bool = typer.Option(
+        False, "--all",
+        help="Process every company that isn't excluded, including ones already done.",
+    ),
     limit: int = typer.Option(None, help="Process at most this many companies, largest first."),
     company_id: list[int] = typer.Option(None, "--company-id", help="Only these company IDs."),
     concurrency: int = typer.Option(10, help="Companies fetched in parallel."),
 ):
     """Find career portals and their ATS for each company."""
+    if all_:
+        status = [s for s in STATUSES if s != "excluded"]
     bad = set(status) - set(STATUSES)
     if bad:
         typer.echo(f"unknown status: {', '.join(sorted(bad))}", err=True)
