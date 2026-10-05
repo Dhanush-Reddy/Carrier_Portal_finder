@@ -11,7 +11,7 @@ import typer
 from portalfinder import MIN_EMPLOYEES
 from portalfinder.db import STATUSES, connect
 from portalfinder.discover import discover_all
-from portalfinder.export import export_csv
+from portalfinder.export import ORG_TYPE_NAMES, export_csv
 from portalfinder.ingest import ingest
 from portalfinder.report import build_report
 from portalfinder.sources import wikidata
@@ -66,6 +66,8 @@ def discover(
     ),
     limit: int = typer.Option(None, help="Process at most this many companies, largest first."),
     company_id: list[int] = typer.Option(None, "--company-id", help="Only these company IDs."),
+    country: list[str] = typer.Option(
+        None, "--country", help='Only companies in this country (repeatable), e.g. --country India.'),
     concurrency: int = typer.Option(10, help="Companies fetched in parallel."),
 ):
     """Find career portals and their ATS for each company."""
@@ -82,6 +84,7 @@ def discover(
         try:
             return await discover_all(
                 conn, fetcher, tuple(status), limit, concurrency, company_id or None,
+                countries=country or None,
                 on_result=lambda r: typer.echo(
                     f"  company {r.company_id}: {r.status}"
                     + (f" ({r.reason})" if r.reason else f", {len(r.portals)} portal(s)")
@@ -126,10 +129,31 @@ def report(db: Path = DB_OPTION, as_json: bool = typer.Option(False, "--json")):
 def export(
     db: Path = DB_OPTION,
     out: Path = typer.Option(Path("exports/companies.csv"), "--out"),
+    country: list[str] = typer.Option(
+        None, "--country", help='Only companies in this country (repeatable), e.g. --country "United States".'),
+    org_type: list[str] = typer.Option(
+        None, "--type",
+        help=f"Only this organisation type (repeatable): {', '.join(ORG_TYPE_NAMES)}."),
 ):
     """Write a CSV with one row per career portal (and one per company without any)."""
-    n = export_csv(connect(db), out)
+    bad = {t.lower() for t in org_type or []} - set(ORG_TYPE_NAMES)
+    if bad:
+        typer.echo(f"unknown type: {', '.join(sorted(bad))}; use {', '.join(ORG_TYPE_NAMES)}", err=True)
+        raise typer.Exit(2)
+    n = export_csv(connect(db), out, countries=country or None, org_types=org_type or None)
     typer.echo(f"Wrote {n} rows to {out}")
+    if country and n == 0:
+        typer.echo("No companies matched; see `portalfinder countries` for the names used.", err=True)
+
+
+@app.command()
+def countries(db: Path = DB_OPTION):
+    """List countries with their number of companies (excluded ones left out)."""
+    rows = connect(db).execute(
+        "SELECT COALESCE(country, '(unknown)') AS c, COUNT(*) AS n FROM companies"
+        " WHERE status != 'excluded' GROUP BY c ORDER BY n DESC, c")
+    for r in rows:
+        typer.echo(f"{r['n']:>6}  {r['c']}")
 
 
 if __name__ == "__main__":

@@ -147,6 +147,10 @@ class Fetcher:
         return await self.blocked(url) is None
 
     async def get(self, url: str) -> Page:
+        try:
+            httpx.URL(url)
+        except (ValueError, httpx.InvalidURL) as exc:
+            raise FetchError("invalid_url", url, str(exc)) from None
         reason = await self.blocked(url)
         if reason:
             raise FetchError(reason, url)

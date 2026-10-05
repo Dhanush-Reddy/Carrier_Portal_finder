@@ -109,6 +109,9 @@ def test_strip_tracking():
     "https://db.jobs/de-de/privacy-policy-db-de-en-10637340",
     "https://www.asda.jobs/right-to-work-uk",
     "http://www.credit-agricole.com/en/news-channels/the-channels/newsflash/credibom-improve-career",
+    # Seen in the full run.
+    "https://jobdb.softgarden.de/jobdb/public/jobposting/applyonline/click?jp=6723161",
+    "https://jobs.guehring.de/Vacancies/428/Description/1",
 ])
 def test_fraud_notices_blogs_and_news_are_not_portals(url):
     assert is_not_portal(url)
