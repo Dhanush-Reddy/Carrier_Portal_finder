@@ -482,6 +482,9 @@ def test_url_and_scope_word_lists():
     from portalfinder.discover import _excluded
     from portalfinder.terms import has_career_url
     assert _excluded("https://www.kariyer.net/firma-profil/sodexo-10807-877")
+    for url in ("https://t.me/acme_jobs", "https://youtu.be/abc", "https://wd3.myworkday.com/acme/login.htmld",
+                "https://www.almacareer.com/careers", "https://www.prd.ngc.agencyq.site/careers"):
+        assert _excluded(url), url
     assert not has_career_url("www.randstaddigital.com", "/approach/talent-services/")
     assert has_career_url("talent.alibaba.com", "/en/home")
     assert classify_scope("High school", "https://yamato-transport-recruit.com/highschool/",
@@ -546,3 +549,28 @@ def test_ats_script_assets_are_not_a_board():
     from portalfinder.discover import find_ats_link
     page.links.append(Link("https://apply.app.jobvite.com/assets/images", "Search jobs", "iframe"))
     assert find_ats_link(page, "HCA Healthcare") is None
+
+
+@pytest.mark.parametrize("website,link", [
+    ("https://x.example/", "http://[careers"),                 # ValueError in urljoin
+    ("https://x.example/", "https://careers.\u00adx.example/"),  # bad IDNA host
+    ("http://www.x-\u00ad-example.com", "/careers"),          # soft hyphen in the source data
+])
+def test_malformed_urls_are_not_internal_errors(website, link):
+    def handle(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        if request.url.path == "/":
+            return httpx.Response(200, text=html("X", f'<a href="{link}">Careers</a>'),
+                                  headers={"content-type": "text/html"})
+        raise httpx.ConnectError("down", request=request)
+
+    async def go():
+        f = Fetcher(client=httpx.AsyncClient(transport=httpx.MockTransport(handle)), retries=0)
+        try:
+            return await disc.discover_company(f, Company(1, "X", website))
+        finally:
+            await f.aclose()
+
+    result = asyncio.run(go())
+    assert result.reason != "internal_error", result.detail

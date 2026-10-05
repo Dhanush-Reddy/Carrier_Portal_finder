@@ -108,7 +108,7 @@ NOT_PORTAL_RE = re.compile(
     r"/user/|passport\.|mon-compte|navbarlevel=my_profile|jobalert|job-alert|"
     r"talentcommunity|talent-community|jobid=|job_id=|jobdetails|job-details|"
     r"/job/[^/]+|/jobs/\d|requisition|/req/|/vacancy/|/stelle/|/offre/|"
-    r"/viewausschreibung/|"
+    r"/viewausschreibung/|applyonline|jobposting|/vacancies/\d|"
     # Recruitment-fraud warnings, blog posts, news, employee stories, equal
     # opportunity statements and career advice are linked from many careers
     # pages but are not portals.

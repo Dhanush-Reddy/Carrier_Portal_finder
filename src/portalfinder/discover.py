@@ -26,6 +26,7 @@ import traceback
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
+import httpx
 import tldextract
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
@@ -64,6 +65,7 @@ GRADUATE_URL_RE = re.compile(
     re.IGNORECASE)
 # ATS tenants used for testing, never the live portal.
 SANDBOX_RE = re.compile(r"sandbox|staging|[-.]uat[-.]|[-.]test[-.]|preprod", re.IGNORECASE)
+INVISIBLE_RE = re.compile("[\u00ad\u200b-\u200f\u2060\ufeff]")
 # First path segments of ATS script URLs that are not a company's board
 # (apply.app.jobvite.com/assets/...).
 NOT_TENANTS = {"", "embed", "assets", "static", "js", "css", "cdn", "scripts", "widget", "widgets", "api"}
@@ -144,7 +146,11 @@ def parse(page: Page) -> ParsedPage:
             raw = (node.attributes.get(attr) or "").strip()
             if not raw or raw.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
                 continue
-            url = urljoin(page.url, raw)
+            try:
+                url = urljoin(page.url, raw)
+                httpx.URL(url)  # rejects hosts that can't be requested ("http://[x")
+            except (ValueError, httpx.InvalidURL):
+                continue
             if not url.startswith(("http://", "https://")):
                 continue
             text = ""
@@ -342,7 +348,8 @@ class CompanyDiscovery:
     def __init__(self, fetcher: Fetcher, company: Company):
         self.fetcher = fetcher
         self.company = company
-        website = (company.website or "").strip()
+        # Invisible characters (soft hyphens) sometimes come with source data.
+        website = INVISIBLE_RE.sub("", company.website or "").strip()
         if website and "://" not in website:
             website = "https://" + website
         self.website = website or None

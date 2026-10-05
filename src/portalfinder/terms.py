@@ -36,9 +36,14 @@ EXCLUDED_DOMAIN_NAMES = {
     "tiktok", "weibo", "wechat", "joinhandshake", "simplyhired", "careerbuilder",
     "jobstreet", "totaljobs", "reed", "zhaopin", "51job", "hh", "superjob",
     "builtin", "wellfound", "dice", "jobindex", "infojobs", "kariyer", "computrabajo",
-    "bumeran", "pracuj", "jobsdb", "rikunabi", "mynavi", "catho",
+    "bumeran", "pracuj", "jobsdb", "rikunabi", "mynavi", "catho", "almacareer", "workland",
+    "telegram",
+    # Workday's sign-in for a company's own staff, not a job portal.
+    "myworkday",
+    # A web agency's staging copy of a client site.
+    "agencyq",
 }
-EXCLUDED_HOSTS = {"play.google.com", "apps.apple.com", "itunes.apple.com"}
+EXCLUDED_HOSTS = {"play.google.com", "apps.apple.com", "itunes.apple.com", "t.me", "youtu.be"}
 
 GRADUATE_RE = re.compile(
     r"\b(graduates?|grad(?:uate)? programs?|early[ -]careers?|students?|campus|"
