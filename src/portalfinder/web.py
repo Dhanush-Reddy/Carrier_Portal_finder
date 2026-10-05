@@ -91,6 +91,11 @@ class Fetcher:
             self._robots[origin] = parser
             return parser
 
+    async def sitemaps(self, origin: str) -> list[str]:
+        """Sitemap URLs declared in the origin's robots.txt."""
+        robots = await self._robots_for(origin)
+        return list(robots.site_maps() or []) if robots else []
+
     async def allowed(self, url: str) -> bool:
         if not self.respect_robots:
             return True

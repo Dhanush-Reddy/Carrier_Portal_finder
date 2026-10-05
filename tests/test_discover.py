@@ -86,6 +86,29 @@ SITE = {
         '<a href="https://mu.wd1.myworkdayjobs.com/MuCareers">Search jobs</a>'
         '<a href="/en/locations">Locations</a><a href="/en/teams">Teams</a>'), {}),
     "https://mu.wd1.myworkdayjobs.com/MuCareers": (200, html("Mu Careers"), {}),
+    # Nu Post: a government-owned company whose own site is on gov.in.
+    "https://nupost.gov.in/": (200, html("Nu Post", '<a href="/careers">Careers</a>'), {}),
+    "https://nupost.gov.in/careers": (200, html("Nu Post careers",
+        '<p>Current openings</p><a href="https://www.usajobs.gov/">Federal jobs</a>'), {}),
+    # Omicron: tracking parameters, an embedded Greenhouse board, a scam warning.
+    "https://omicron.com/": (200, html("Omicron",
+        '<a href="https://jobs.omicron.com/fr?utm_source=omicron.com&utm_medium=web">Careers</a>'), {}),
+    "https://jobs.omicron.com/fr?utm_source=omicron.com&utm_medium=web": (200, html("Omicron jobs",
+        '<script src="https://boards.greenhouse.io/embed/job_board/js?for=omicron"></script>'
+        '<a href="https://consumer.ftc.gov/articles/job-scams">Beware of job scams</a>'
+        '<a href="https://joinhandshake.com/employers/omicron">Students on Handshake</a>'), {}),
+    # Pi: no careers link on the homepage, but the sitemap lists one.
+    "https://pi.com/": (200, html("Pi"), {}),
+    "https://pi.com/sitemap.xml": (200,
+        '<?xml version="1.0"?><sitemapindex><sitemap><loc>https://pi.com/sitemap-news.xml</loc></sitemap>'
+        '<sitemap><loc>https://pi.com/sitemap-pages.xml</loc></sitemap></sitemapindex>',
+        {"content-type": "application/xml"}),
+    "https://pi.com/sitemap-pages.xml": (200,
+        '<urlset><url><loc>https://pi.com/en/about</loc></url>'
+        '<url><loc>https://pi.com/en/about/careers-at-pi/benefits</loc></url>'
+        '<url><loc>https://pi.com/en/about/careers-at-pi</loc></url></urlset>',
+        {"content-type": "application/xml"}),
+    "https://pi.com/en/about/careers-at-pi": (200, html("Careers at Pi", "<p>Open roles</p>"), {}),
     # JS-only homepage.
     "https://iota.com/": (200, "<html><body><div id=root></div></body></html>", {}),
 }
@@ -121,6 +144,9 @@ COMPANIES = [
     ("Kappa Corp", "kappa.com"),  # no scheme, as some sources give it
     ("Lambda Logistics", "https://lambda.com/"),
     ("Mu Retail", "https://mu.com/"),
+    ("Nu Post", "https://nupost.gov.in/"),
+    ("Omicron SA", "https://omicron.com/"),
+    ("Pi Industries", "https://pi.com/"),
 ]
 
 
@@ -171,6 +197,9 @@ def test_every_company_gets_an_outcome(loaded):
         "Kappa Corp": ("discovered", None),
         "Lambda Logistics": ("discovered", None),
         "Mu Retail": ("discovered", None),
+        "Nu Post": ("discovered", None),
+        "Omicron SA": ("discovered", None),
+        "Pi Industries": ("discovered", None),
     }
     assert build_report(loaded).ok
     events = loaded.execute(
@@ -220,7 +249,7 @@ def test_rerun_replaces_portals_and_retries_selected_statuses(loaded):
     run(loaded)
     before = loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0]
     summary = run(loaded, statuses=("discovered", "failed"))
-    assert summary.selected == 8
+    assert summary.selected == 11
     assert loaded.execute("SELECT COUNT(*) FROM career_portals").fetchone()[0] == before
     assert build_report(loaded).ok
 
@@ -243,8 +272,9 @@ def test_unexpected_error_is_recorded_not_lost(loaded, monkeypatch):
 def test_export_has_one_row_per_portal(loaded, tmp_path):
     run(loaded)
     out = tmp_path / "out.csv"
-    # Acme 4 + Lambda 3 + Beta, Eta, Theta, Kappa, Mu 1 each + 5 companies without portals
-    assert export_csv(loaded, out) == 17
+    # Acme 4 + Lambda 3 + Beta, Eta, Theta, Kappa, Mu, Nu, Omicron, Pi 1 each
+    # + 5 companies without portals
+    assert export_csv(loaded, out) == 20
 
 
 def test_link_score_prefers_main_careers_page():
@@ -323,3 +353,60 @@ def test_html_without_content_type_is_accepted():
     assert Page("u", "u", 200, "<!DOCTYPE html><html></html>", "").ok
     assert not Page("u", "u", 200, '{"a": 1}', "application/json").ok
     assert not Page("u", "u", 404, "<html></html>", "text/html").ok
+
+
+def test_government_company_keeps_its_own_site_but_drops_gov_links(loaded):
+    run(loaded)
+    assert list(portals(loaded, "Nu Post")) == ["https://nupost.gov.in/careers"]
+
+
+def test_tracking_params_embedded_board_and_third_party_links(loaded):
+    run(loaded)
+    found = portals(loaded, "Omicron SA")
+    assert list(found) == ["https://jobs.omicron.com/fr"]
+    main = found["https://jobs.omicron.com/fr"]
+    assert (main["ats_provider"], main["final_ats_url"]) == ("Greenhouse", "https://boards.greenhouse.io/omicron")
+
+
+def test_sitemap_finds_careers_page_without_homepage_link(loaded):
+    run(loaded)
+    found = portals(loaded, "Pi Industries")
+    assert list(found) == ["https://pi.com/en/about/careers-at-pi"]
+    assert found["https://pi.com/en/about/careers-at-pi"]["discovered_via"] == "sitemap"
+
+
+def test_find_ats_link_skips_sandbox_and_graduate_boards():
+    from portalfinder.discover import ParsedPage, find_ats_link
+    page = ParsedPage("Careers", [
+        Link("https://att.wd1.myworkdayjobs.com/ATTcollege", "College jobs", "a"),
+        Link("https://hp-sandbox.eightfold.ai/careers", "Search jobs", "a"),
+        Link("https://att.wd1.myworkdayjobs.com/ATTGeneral", "Search jobs", "a"),
+    ], "")
+    assert find_ats_link(page) == "https://att.wd1.myworkdayjobs.com/ATTGeneral"
+
+
+def test_third_party_sites_matched_by_domain_name():
+    from portalfinder.discover import _excluded
+    assert _excluded("https://uk.indeed.com/cmp/acme")
+    assert _excluded("https://www.indeed.co.uk/jobs")
+    assert _excluded("https://joinhandshake.com/x")
+    assert _excluded("https://x.com/acme")
+    assert not _excluded("https://www.xerox.com/en-us/jobs")
+    assert not _excluded("https://www.dropbox.com/jobs")
+
+
+def test_discover_all_redoes_finished_companies_but_not_excluded(tmp_path):
+    from typer.testing import CliRunner
+    from portalfinder.cli import app
+    from portalfinder.db import connect
+    db = tmp_path / "t.db"
+    conn = connect(db)
+    ingest(conn, "test", [CompanyRecord("test", "1", "Done Co", 5000),
+                          CompanyRecord("test", "2", "Gone Co", 5000)])
+    conn.execute("UPDATE companies SET status = 'discovered' WHERE name = 'Done Co'")
+    conn.execute("UPDATE companies SET status = 'excluded', status_reason = 'dissolved'"
+                 " WHERE name = 'Gone Co'")
+    conn.commit()
+    result = CliRunner().invoke(app, ["discover", "--db", str(db), "--all"])
+    assert result.exit_code == 0, result.output
+    assert "Processed 1 companies" in result.output

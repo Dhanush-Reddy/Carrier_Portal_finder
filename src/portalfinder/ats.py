@@ -104,9 +104,25 @@ NOT_PORTAL_RE = re.compile(
     r"/profile|userhome|dashboard|saved-?jobs|saved-?searches|/applications|/applicant|"
     r"/user/|passport\.|mon-compte|navbarlevel=my_profile|jobalert|job-alert|"
     r"talentcommunity|talent-community|jobid=|job_id=|jobdetails|job-details|"
-    r"/job/[^/]+|/jobs/\d|requisition|/req/|/vacancy/|/stelle/|/offre/)",
+    r"/job/[^/]+|/jobs/\d|requisition|/req/|/vacancy/|/stelle/|/offre/|"
+    # Recruitment-fraud warnings, blog posts and news are linked from many
+    # careers pages but are not portals.
+    r"fraud|scam|phishing|recruitment-notice|/blog/|/news/|/press/|/articles?/|"
+    r"^stories\.|\.stories\.|/stories/)",
     re.IGNORECASE,
 )
+
+
+TRACKING_PARAMS = re.compile(
+    r"^(utm_[a-z]+|_ga|_gl|gclid|fbclid|msclkid|mc_cid|mc_eid|igshid|yclid)$", re.IGNORECASE)
+
+
+def strip_tracking(url: str) -> str:
+    """Remove analytics parameters (utm_*, _ga, gclid...) and the fragment."""
+    parts = urlsplit(url)
+    params = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+              if not TRACKING_PARAMS.match(k)]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params), ""))
 
 
 def is_asset(url: str) -> bool:
@@ -119,7 +135,7 @@ def is_not_portal(url: str) -> bool:
     return bool(NOT_PORTAL_RE.search(f"{parts.netloc}{parts.path}?{parts.query}"))
 
 
-_WORKDAY_LOCALE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")
+_WORKDAY_LOCALE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$", re.IGNORECASE)
 
 
 def clean_ats_url(url: str) -> str:
@@ -153,4 +169,4 @@ def clean_ats_url(url: str) -> str:
         return urlunsplit((parts.scheme, parts.netloc, "/" + segs[0] if segs else "/", "", ""))
     if provider and is_not_portal(url):
         return urlunsplit((parts.scheme, parts.netloc, "/", "", ""))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    return strip_tracking(url)

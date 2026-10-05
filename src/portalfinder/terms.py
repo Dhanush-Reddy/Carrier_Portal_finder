@@ -27,13 +27,17 @@ CAREER_URL_TOKENS = {
     "kariera", "kariyer", "saiyo", "recruit", "talent", "jobsearch", "job-search",
 }
 
-# Third-party job boards and social sites are never an official portal.
-EXCLUDED_HOSTS = (
-    "linkedin.com", "indeed.", "glassdoor.", "facebook.com", "twitter.com", "x.com",
-    "instagram.com", "youtube.com", "monster.", "ziprecruiter.com", "naukri.com",
-    "seek.com", "stepstone.", "xing.com", "tiktok.com", "weibo.com", "wechat.com",
-    "apple.com/app-store", "play.google.com", "apps.apple.com",
-)
+# Third-party job boards, social and app-store sites are never an official
+# portal. Matched on the registrable domain's name ("indeed" covers indeed.com
+# and indeed.co.uk) so that, say, xerox.com is not caught by "x.com".
+EXCLUDED_DOMAIN_NAMES = {
+    "linkedin", "indeed", "glassdoor", "facebook", "twitter", "x", "instagram",
+    "youtube", "monster", "ziprecruiter", "naukri", "seek", "stepstone", "xing",
+    "tiktok", "weibo", "wechat", "joinhandshake", "simplyhired", "careerbuilder",
+    "jobstreet", "totaljobs", "reed", "zhaopin", "51job", "hh", "superjob",
+    "builtin", "wellfound", "dice", "jobindex", "infojobs",
+}
+EXCLUDED_HOSTS = {"play.google.com", "apps.apple.com", "itunes.apple.com"}
 
 GRADUATE_RE = re.compile(
     r"\b(graduates?|grad(?:uate)? programs?|early[ -]careers?|students?|campus|"

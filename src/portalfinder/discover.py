@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 import traceback
 from dataclasses import dataclass, field
@@ -28,9 +29,18 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import tldextract
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
-from portalfinder.ats import ats_tenant, clean_ats_url, detect_ats, is_asset, is_not_portal
+from portalfinder.ats import (
+    PATH_TENANT_PROVIDERS,
+    ats_tenant,
+    clean_ats_url,
+    detect_ats,
+    is_asset,
+    is_not_portal,
+    strip_tracking,
+)
 from portalfinder.db import log_event, now
 from portalfinder.terms import (
+    EXCLUDED_DOMAIN_NAMES,
     EXCLUDED_HOSTS,
     GRADUATE_RE,
     JOB_CONTENT_RE,
@@ -48,8 +58,16 @@ _extract = tldextract.TLDExtract(suffix_list_urls=())  # bundled list, no networ
 SCOPE_CAPS = {"regional": 30, "graduate": 3, "affiliate": 5, "other": 3}
 # Link text longer than this is a job title or teaser, not a region label.
 MAX_REGION_TEXT = 60
-PROBE_PATHS = ("/careers", "/jobs", "/careers/", "/en/careers", "/about/careers",
-               "/company/careers", "/karriere")
+# Graduate wording inside URLs, where words run together ("ATTcollege").
+GRADUATE_URL_RE = re.compile(
+    r"college|graduate|campus|internship|student|early-?careers?|apprentic", re.IGNORECASE)
+# ATS tenants used for testing, never the live portal.
+SANDBOX_RE = re.compile(r"sandbox|staging|[-.]uat[-.]|[-.]test[-.]|preprod", re.IGNORECASE)
+PROBE_PATHS = ("/careers", "/jobs", "/en/careers", "/career", "/about/careers",
+               "/about-us/careers", "/company/careers", "/en/about/careers", "/join-us",
+               "/work-with-us", "/en/jobs", "/recruit", "/karriere")
+MAX_SITEMAPS = 4  # sitemap files read per company (index + children)
+_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
 PROBE_SUBDOMAINS = ("careers", "jobs")
 
 # Confidence weights; see ``score``.
@@ -120,9 +138,15 @@ def parse(page: Page) -> ParsedPage:
 
 
 def _excluded(url: str) -> bool:
-    lowered = url.lower()
-    host = urlsplit(lowered).hostname or ""
-    return any(h in host or h in lowered for h in EXCLUDED_HOSTS)
+    """Third-party job boards, social sites, app stores and government sites."""
+    host = (urlsplit(url).hostname or "").lower()
+    ext = _extract(host)
+    return host in EXCLUDED_HOSTS or ext.domain in EXCLUDED_DOMAIN_NAMES
+
+
+def _is_government(url: str) -> bool:
+    ext = _extract(urlsplit(url).hostname or "")
+    return ext.suffix.split(".")[0] in ("gov", "mil", "gob", "gouv") or ext.domain == "gov"
 
 
 def is_careers_link(link: Link) -> bool:
@@ -188,23 +212,33 @@ def find_ats_link(parsed: ParsedPage) -> str | None:
         return None
     ats_links.sort(key=lambda l: (
         is_not_portal(l.url),
+        bool(SANDBOX_RE.search(l.url)),
+        # A graduate-only board is not the main one (AT&T's ATTcollege).
+        bool(GRADUATE_RE.search(l.text or "") or GRADUATE_URL_RE.search(l.url)),
         l.kind != "a",
         not JOB_CONTENT_RE.search(l.text or "") and not has_career_text(l.text or ""),
     ))
     return ats_links[0].url
 
 
-def ats_from_scripts(parsed: ParsedPage) -> str | None:
+def ats_from_scripts(parsed: ParsedPage) -> tuple[str, str | None] | None:
     """The ATS a careers site runs on, from the scripts it loads.
 
     Hosted career sites (Phenom, SuccessFactors, Avature...) often sit on the
     company's own domain and only reveal the provider through their scripts.
+    Returns ``(provider, board_url)``; ``board_url`` is set for embedded
+    boards that name their tenant, e.g. Greenhouse's ``embed/job_board/js?for=acme``.
     """
     for link in parsed.links:
         if link.kind == "script":
             provider = detect_ats(link.url)
             if provider:
-                return provider
+                board = None
+                if provider in PATH_TENANT_PROVIDERS:
+                    tenant = ats_tenant(link.url) or ""
+                    if tenant.split(":", 1)[1] not in ("", "embed"):
+                        board = clean_ats_url(link.url)
+                return provider, board
     return None
 
 
@@ -223,6 +257,7 @@ class PortalFound:
     ats_link: str | None = None  # the ATS link as found, before redirects
     final_page_url: str | None = None
     ats_found_via: str | None = None  # page_url | link | page_scripts
+    link_url: str | None = None  # the link as the site gave it, tracking params included
 
     @property
     def confidence(self) -> float:
@@ -267,7 +302,7 @@ class CompanyDiscovery:
 
     async def _resolve(self, portal: PortalFound, link_text: str) -> ParsedPage | None:
         """Fetch a portal page, find its ATS link and fill in the signals."""
-        page, error = await self._fetch(portal.career_page_url)
+        page, error = await self._fetch(portal.link_url or portal.career_page_url)
         on_ats = detect_ats(portal.career_page_url)
         if page is not None:
             portal.http_status = page.status
@@ -300,10 +335,12 @@ class CompanyDiscovery:
             portal.final_ats_url = clean_ats_url(ats_url)
             portal.ats_provider = detect_ats(portal.final_ats_url)
         else:
-            # A hosted career site on the company's domain is itself the portal.
-            portal.final_ats_url = final_page_url
-            portal.ats_provider = ats_from_scripts(parsed)
-            ats_via = "page_scripts" if portal.ats_provider else None
+            # A hosted career site on the company's domain is itself the portal,
+            # unless its scripts embed a named board (Greenhouse, Lever...).
+            found = ats_from_scripts(parsed)
+            portal.ats_provider = found[0] if found else None
+            portal.final_ats_url = (found[1] if found and found[1] else None) or strip_tracking(final_page_url)
+            ats_via = "page_scripts" if found else None
         portal.ats_found_via = ats_via
         portal.signals.update(
             ats_detected=portal.ats_provider is not None,
@@ -318,21 +355,62 @@ class CompanyDiscovery:
     def _on_company_domain(self, url: str) -> bool:
         return registrable_domain(url) in self.domains
 
+    async def _sitemap_candidates(self, origin: str) -> list[str]:
+        """Careers URLs listed in the site's sitemap(s), shortest path first.
+
+        Helps when the homepage builds its menu with JavaScript or hides the
+        careers link, since sitemaps list pages regardless.
+        """
+        queue = await self.fetcher.sitemaps(origin) or [origin + "/sitemap.xml"]
+        found: list[str] = []
+        read = 0
+        while queue and read < MAX_SITEMAPS:
+            url = queue.pop(0)
+            if url.endswith(".gz"):
+                continue
+            read += 1
+            try:
+                page = await self.fetcher.get(url)
+            except FetchError:
+                continue
+            if page.status != 200:
+                continue
+            locs = _LOC_RE.findall(page.text)
+            if "<sitemapindex" in page.text[:2000].lower():
+                # Read child sitemaps that look careers-related first.
+                locs.sort(key=lambda u: not has_career_url("", urlsplit(u).path))
+                queue.extend(locs)
+                continue
+            for loc in locs:
+                parts = urlsplit(loc)
+                if (has_career_url(parts.hostname or "", parts.path)
+                        and not is_not_portal(loc) and not is_asset(loc)):
+                    found.append(loc)
+        found.sort(key=lambda u: (len([s for s in urlsplit(u).path.split("/") if s]), len(u)))
+        return found[:3]
+
     async def _probe(self, same_origin: bool = True) -> tuple[PortalFound, str] | None:
-        """Try common careers locations. ``same_origin=False`` skips paths on the
-        homepage's host, used when that host is down."""
+        """Try the sitemap, then common careers locations. ``same_origin=False``
+        skips the homepage's host, used when that host is down."""
         base = urlsplit(self.website)
         origin = f"{base.scheme or 'https'}://{base.netloc or self.domain}"
-        candidates = [origin + p for p in PROBE_PATHS] if same_origin else []
-        candidates += [f"https://{sub}.{self.domain}/" for sub in PROBE_SUBDOMAINS]
+        candidates: list[tuple[str, str]] = []
+        if same_origin:
+            candidates += [(u, "sitemap") for u in await self._sitemap_candidates(origin)]
+            candidates += [(origin + p, "path_probe") for p in PROBE_PATHS]
+        candidates += [(f"https://{sub}.{self.domain}/", "path_probe") for sub in PROBE_SUBDOMAINS]
         home = normalize_url(self.website)
-        for url in candidates:
+        tried: set[str] = set()
+        for url, via in candidates:
+            if normalize_url(url) in tried:
+                continue
+            tried.add(normalize_url(url))
             page, error = await self._fetch(url)
             if error or page is None or normalize_url(page.url) == home:
                 continue
             parsed = parse(page)
             if has_career_text(parsed.title) or JOB_CONTENT_RE.search(parsed.text[:20_000]):
-                return PortalFound(url, "global", discovered_via="path_probe",
+                return PortalFound(strip_tracking(url), "global", link_url=url, discovered_via=via,
                                    signals={"found_by_probe": True}), parsed.title
         return None
 
@@ -352,7 +430,8 @@ class CompanyDiscovery:
         if candidates:
             best = max(candidates, key=link_score)
             main_text = best.text
-            main = PortalFound(best.url, "global", discovered_via="homepage_link",
+            main = PortalFound(strip_tracking(best.url), "global", link_url=best.url,
+                               discovered_via="homepage_link",
                                signals={"linked_from_official_site": True})
         elif self.domain:
             host_down = home_error in ("site_unreachable", "timeout")
@@ -393,6 +472,8 @@ class CompanyDiscovery:
             scope, region = classify_scope(link.text, link.url, self.domains)
             if scope == "other" and not detect_ats(link.url):
                 continue  # e.g. /careers/benefits: part of the main site, not a portal
+            if scope == "affiliate" and _is_government(link.url):
+                continue  # e.g. a job-scam warning on a consumer-protection site
             seen.add(key)
             # A page nested under one already kept for the same scope is a
             # sub-page of it (e.g. /internships/finance under /internships).
@@ -406,7 +487,8 @@ class CompanyDiscovery:
             kept_paths.setdefault(scope, []).append(key)
             extras.append((link, scope, region))
         for link, scope, region in extras:
-            portal = PortalFound(link.url, scope, region, discovered_via="careers_page_link",
+            portal = PortalFound(strip_tracking(link.url), scope, region, link_url=link.url,
+                                 discovered_via="careers_page_link",
                                  signals={"linked_from_official_site": True})
             await self._resolve(portal, link.text)
             portals.append(portal)

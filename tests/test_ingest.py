@@ -128,3 +128,15 @@ def test_wikidata_dissolved_date_is_read():
              "dissolved": {"value": "1945-01-01T00:00:00Z"}}]
     rec = wikidata.parse_details(rows, {"Q5": 1581000})["Q5"]
     assert rec.dissolved == "1945-01-01"
+
+
+def test_exclusion_removes_auto_discovered_portals(conn):
+    ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q9", "RAO UES", 577000)])
+    cid = conn.execute("SELECT id FROM companies").fetchone()["id"]
+    conn.execute("INSERT INTO career_portals (company_id, career_page_url, discovered_via)"
+                 " VALUES (?, 'https://rao.ru/careers', 'homepage_link')", (cid,))
+    conn.execute("INSERT INTO career_portals (company_id, career_page_url, discovered_via)"
+                 " VALUES (?, 'https://rao.ru/manual', 'manual')", (cid,))
+    ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q9", "RAO UES", 577000, dissolved="2008-07-01")])
+    left = [r["career_page_url"] for r in conn.execute("SELECT career_page_url FROM career_portals")]
+    assert left == ["https://rao.ru/manual"]

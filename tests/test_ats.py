@@ -1,6 +1,8 @@
 import pytest
 
-from portalfinder.ats import ats_tenant, clean_ats_url, detect_ats, is_asset, is_not_portal
+from portalfinder.ats import (
+    ats_tenant, clean_ats_url, detect_ats, is_asset, is_not_portal, strip_tracking,
+)
 from portalfinder.normalize import linkedin_company_url, website_domain
 
 
@@ -49,6 +51,7 @@ def test_ats_tenant():
     ("https://boards.greenhouse.io/embed/job_board?for=stripe", "https://boards.greenhouse.io/stripe"),
     ("https://acme-career.talent-soft.com/mon-compte/cv.aspx", "https://acme-career.talent-soft.com/"),
     ("https://www.acme.com/careers", "https://www.acme.com/careers"),
+    ("https://ghr.wd1.myworkdayjobs.com/en-us/Lateral-US/job/123", "https://ghr.wd1.myworkdayjobs.com/en-us/Lateral-US"),
 ])
 def test_clean_ats_url(url, clean):
     assert clean_ats_url(url) == clean
@@ -63,3 +66,19 @@ def test_assets_and_non_portal_links():
     assert is_not_portal("https://passport.amazon.jobs/accountInfo")
     assert not is_not_portal("https://careers.dhl.com/global/en/dhl-usa")
     assert not is_not_portal("https://www.accenture.com/ar-es/careers")
+
+
+def test_strip_tracking():
+    assert strip_tracking("https://jobs.veolia.com/fr?utm_source=veolia.com&utm_medium=web&lang=fr#top") \
+        == "https://jobs.veolia.com/fr?lang=fr"
+    assert strip_tracking("https://x.com/stellenboerse/?_ga=cd*123") == "https://x.com/stellenboerse/"
+
+
+@pytest.mark.parametrize("url", [
+    "https://consumer.ftc.gov/articles/job-scams",
+    "https://www.unilevernotices.com/recruitment-notices.html",
+    "https://stories.pepsicojobs.com/blog/2025/10/01/unlocking-opportunities",
+    "https://www.acme.com/careers/news/2024/award",
+])
+def test_fraud_notices_blogs_and_news_are_not_portals(url):
+    assert is_not_portal(url)
