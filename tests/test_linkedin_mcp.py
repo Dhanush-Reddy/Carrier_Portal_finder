@@ -70,6 +70,25 @@ def test_stops_when_linkedin_pushes_back(tmp_path):
     assert not (tmp_path / "cache" / "throttled.json").exists()  # retried next run
 
 
+def test_stickerdaniel_answer_shape(tmp_path):
+    summary, rows = fetch([company("tcs", "TCS")], tmp_path)
+    [tcs] = rows
+    assert tcs["status"] == "ok"
+    assert tcs["industry"] == "IT Services and IT Consulting"
+    assert (tcs["employee_band"], tcs["employee_count"]) == ("10,001+", 10001)
+    assert tcs["website"] == "http://www.tcs.com"
+    assert tcs["headquarters"] == "Mumbai, Maharashtra" and tcs["country"] == "India"
+    assert tcs["founded"] == "1968"
+    assert tcs["linkedin_url"] == "https://www.linkedin.com/company/tata-consultancy-services"
+
+
+def test_stops_on_rate_limit_inside_an_answer(tmp_path):
+    summary, rows = fetch([company("soft-limited"), company("wipro")], tmp_path)
+    assert summary.stopped and "rate limit" in summary.stopped
+    assert [r["status"] for r in rows] == ["error", "not_fetched"]
+    assert not (tmp_path / "cache" / "soft-limited.json").exists()
+
+
 def test_pick_tool_and_argument():
     tools = [ToolInfo("search_jobs", "", {"keywords": {}}, ["keywords"]),
              ToolInfo("get_company_profile", "", {"company_name": {}, "get_employees": {}},
@@ -122,6 +141,12 @@ def test_load_server_from_claude_configs(tmp_path):
     assert linkedin_mcp.load_server(code, "li")["url"].endswith("/mcp")
     with pytest.raises(linkedin_mcp.McpSetupError):
         linkedin_mcp.load_server(code, "other")
+    jobhunt = tmp_path / "mcp-connections.json"  # job-hunt's data/mcp-connections.json
+    jobhunt.write_text(json.dumps({"linkedin": {"transport": "stdio", "command": "python.exe",
+                                                "args": ["-m", "linkedin_mcp_server"]},
+                                   "naukri": {"transport": "stdio", "command": "python.exe"}}),
+                       encoding="utf-8-sig")
+    assert linkedin_mcp.load_server(jobhunt)["args"] == ["-m", "linkedin_mcp_server"]
 
 
 def test_cli_fetch_and_ingest(tmp_path, monkeypatch):
@@ -138,7 +163,7 @@ def test_cli_fetch_and_ingest(tmp_path, monkeypatch):
     runner = CliRunner()
     listed = runner.invoke(app, ["mcp-tools", "--mcp-config", str(config)])
     assert listed.exit_code == 0, listed.output
-    assert "get_company_profile(company_name*)" in listed.output
+    assert "get_company_profile(company_name*, sections)" in listed.output
     result = runner.invoke(app, [
         "linkedin-fetch", "--mcp-config", str(config), "--input", str(inp),
         "--delay", "0", "--db", "t.db", "--ingest"])

@@ -15,7 +15,7 @@ from portalfinder.discover import discover_all
 from portalfinder.export import ORG_TYPE_NAMES, SECTOR_NAMES, export_csv, sector
 from portalfinder.ingest import ingest
 from portalfinder.report import build_report
-from portalfinder.sources import linkedin_mcp, wikidata
+from portalfinder.sources import linkedin_mcp, pdl, wikidata
 from portalfinder.web import Fetcher
 
 app = typer.Typer(no_args_is_help=True, help=__doc__)
@@ -52,6 +52,35 @@ def ingest_wikidata(
     typer.echo(
         f"run {run.run_id}: seen {run.seen}, inserted {run.inserted}, updated {run.updated},"
         f" merged {run.merged}, rejected {run.rejected}"
+    )
+
+
+@app.command("ingest-pdl")
+def ingest_pdl(
+    file: Path = typer.Argument(..., help="The People Data Labs free company dataset file (.csv, .json, .zip or .gz)."),
+    db: Path = DB_OPTION,
+    country: list[str] = typer.Option(
+        None, "--country", help="Only companies in this country (repeatable), e.g. --country India. Default: all."),
+    min_employees: int = typer.Option(MIN_EMPLOYEES, help="Keep size bands that start above this."),
+):
+    """Load companies from the People Data Labs free company dataset."""
+    if not file.exists():
+        typer.echo(f"no such file: {file}", err=True)
+        raise typer.Exit(2)
+    conn = connect(db)
+    scan = pdl.ScanSummary()
+    typer.echo(f"Reading {file} (about 22 million companies; this takes a few minutes)...")
+    records = pdl.records(
+        file, country or (), min_employees, scan,
+        on_progress=lambda read, kept: typer.echo(f"  {read:,} read, {kept:,} kept"))
+    run = ingest(conn, pdl.SOURCE, records, min_employees, merge_on_domain=True)
+    typer.echo(f"{scan.read:,} companies read; {scan.kept:,} match the country and size filters.")
+    if country and not scan.kept:
+        typer.echo("No companies matched; the dataset spells countries in full, e.g. India, United States.",
+                   err=True)
+    typer.echo(
+        f"run {run.run_id}: inserted {run.inserted}, updated {run.updated},"
+        f" merged {run.merged} (with companies already loaded), rejected {run.rejected}"
     )
 
 

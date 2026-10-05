@@ -18,7 +18,7 @@ run is reconciled so the counts must add up.
 | Career portal discovery (careers links, ATS, graduate/regional/affiliate portals, confidence) | Done |
 | Verification through ATS job APIs (Workday, Greenhouse, Lever, SmartRecruiters) | Next |
 | LinkedIn company details through your own LinkedIn MCP server | Done |
-| People Data Labs free dataset ingest | Next |
+| People Data Labs free company dataset ingest | Done |
 | Headless-browser fallback for JavaScript-only sites, search-API fallback | Planned |
 
 ## Data sources
@@ -29,8 +29,9 @@ LinkedIn company URLs come from sources that already carry them:
 - **Wikidata** (CC0): employees (P1128), website (P856), country (P17),
   industry (P452), parent organisation (P749), LinkedIn company ID (P4264).
   Only items that are a subclass of *business* (Q4830453) are included.
-- **People Data Labs free company dataset** (next): broad coverage of the
-  1,001+ size bands, with LinkedIn URLs.
+- **People Data Labs free company dataset**: about 22 million companies with
+  size band, industry, country, website and LinkedIn URL. Broad coverage of
+  the 1,001+ size bands, including the many Indian companies Wikidata lacks.
 
 ## Usage
 
@@ -104,6 +105,33 @@ portalfinder export --db portalfinder.db --out exports/companies.csv
 
 Run `portalfinder <command> --help` for every option.
 
+### Company list from People Data Labs
+
+For every company in a country with more than 1,000 employees, download the
+free company dataset from <https://www.peopledatalabs.com/company-dataset>
+(fill in the short form; CSV, pipe-delimited or JSON; a zip file is fine, or
+unzip it with 7-Zip). If that download doesn't work, People Data Labs' older
+2019 copy on Kaggle works too (free Kaggle sign-in):
+<https://www.kaggle.com/datasets/peopledatalabssf/free-7-million-company-dataset>,
+file `companies_sorted.csv`. Then:
+
+```bat
+portalfinder ingest-pdl path\to\free_company_dataset.zip --db portalfinder.db --country India
+portalfinder discover --db portalfinder.db --country India
+portalfinder export --db portalfinder.db --out exports\india_companies.csv --country India --type company --per-company
+```
+
+- `ingest-pdl` reads the whole file (a few minutes) and keeps the companies
+  in the `--country` given (repeatable; all countries without it) whose
+  size band starts above 1,000. The employee count is the band's lower
+  bound: 1001-5000 becomes 1001, 10001+ becomes 10001.
+- A company already loaded from Wikidata is updated rather than duplicated
+  when the LinkedIn URL matches, or when it is the only company with the
+  same website and has no other LinkedIn URL.
+- `discover` then finds each company's career portals, and the export
+  writes one row per company with its main careers page, ATS and other
+  career pages. Add `--sector it` for IT companies only.
+
 ### Adding companies through your LinkedIn MCP server
 
 Wikidata misses many large IT companies (Wipro, HCLTech, Zoho...). If you
@@ -123,7 +151,8 @@ portalfinder export --db portalfinder.db --out exports/it_companies.csv --sector
 
 - The config is Claude Desktop's `claude_desktop_config.json` (on Windows in
   `%APPDATA%\Claude`), or Claude Code's `%USERPROFILE%\.claude.json` or a
-  project's `.mcp.json`. The server whose name contains "linkedin" is used;
+  project's `.mcp.json`, or job-hunt's `data\mcp-connections.json` (which
+  reuses job-hunt's signed-in LinkedIn session). The server whose name contains "linkedin" is used;
   pick another with `--server`, or give the command that starts it with
   `--mcp-command`.
 - `mcp-tools` lists the server's tools. The company-profile tool and its
