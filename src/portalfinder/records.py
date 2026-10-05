@@ -22,4 +22,5 @@ class CompanyRecord:
     country: str | None = None
     industry: str | None = None
     parents: list[Parent] = field(default_factory=list)
+    dissolved: str | None = None  # date the company ceased to exist, if it has
     raw: dict | None = None

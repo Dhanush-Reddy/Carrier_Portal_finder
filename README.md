@@ -96,13 +96,22 @@ For each company, largest first:
    `jobs.<domain>` and a few other common locations. A path that just
    redirects back to the homepage doesn't count.
 3. The best-ranked link is the **global** portal. On it, find the link or
-   embed into an ATS and follow redirects to get the **final ATS URL**.
+   embed into an ATS and follow redirects to get the **final ATS URL**,
+   reduced to the portal's entry point (a Workday sign-in redirect becomes
+   the career site, a Lever job advert becomes the company's board). Job
+   search links are preferred over sign-in or profile links. A hosted career
+   site on the company's own domain (common with Phenom, SuccessFactors and
+   Avature) is its own final URL; its provider is read from the scripts it
+   loads.
 4. Other careers links on the homepage or main careers page become extra
    portals when they are a **graduate** page (graduates, students, interns,
    apprentices...), a **regional** page (a country or region name), an
    **affiliate** site on another domain, or a different ATS tenant
-   (**other**). Pages like `/careers/benefits` are not portals. Up to 6
-   extras per company; any beyond that are counted in the event log.
+   (**other**). Pages like `/careers/benefits`, sign-in and account pages,
+   single job adverts and PDFs are not portals, and sub-pages of a portal
+   already kept are skipped. Per company: up to 30 regional, 5 affiliate,
+   3 graduate and 3 other extras; any beyond that are counted in the event
+   log.
 
 Robots.txt is respected and requests identify themselves with a
 `portalfinder/0.1` user agent.
@@ -121,6 +130,7 @@ portal in `career_portals.evidence`.
 | `needs_review` | `careers_page_unreachable`: careers link found but the page blocks or errors (often bot protection) |
 | `no_portal_found` | `no_website`, `no_careers_link`, `no_links_in_html` (JavaScript-only site, needs the browser fallback) |
 | `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `http_<code>`, `internal_error` |
+| `excluded` | set at ingest: `dissolved`, `implausible_employee_count` (over 2.5 million, a source data error) |
 
 Re-running discovery for a company replaces its auto-discovered portals;
 portals with `discovered_via = 'manual'` are kept.

@@ -26,7 +26,14 @@ class Page:
 
     @property
     def ok(self) -> bool:
-        return 200 <= self.status < 300 and "html" in self.content_type
+        if not 200 <= self.status < 300:
+            return False
+        if "html" in self.content_type:
+            return True
+        # Some servers send HTML with a missing or generic content type.
+        generic = not self.content_type or self.content_type.startswith(
+            ("text/plain", "application/octet-stream"))
+        return generic and self.text.lstrip()[:200].lower().startswith(("<!doctype html", "<html"))
 
 
 class FetchError(Exception):
@@ -48,7 +55,11 @@ class Fetcher:
         respect_robots: bool = True,
     ):
         self.client = client or httpx.AsyncClient(
-            headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
             timeout=timeout,
             follow_redirects=True,
         )
@@ -108,7 +119,7 @@ class Fetcher:
                         url=str(resp.url),
                         status=resp.status_code,
                         text=body.decode(resp.encoding or "utf-8", errors="replace"),
-                        content_type=resp.headers.get("content-type", "text/html").lower(),
+                        content_type=resp.headers.get("content-type", "").lower(),
                     )
             except httpx.TimeoutException as exc:
                 last = exc

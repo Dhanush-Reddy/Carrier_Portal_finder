@@ -21,6 +21,7 @@ STATUSES = (
     "needs_review",
     "no_portal_found",
     "failed",
+    "excluded",  # no longer qualifies (e.g. dissolved); kept so it is visible
 )
 
 SCHEMA = """

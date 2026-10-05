@@ -52,13 +52,14 @@ def employee_bands(min_employees: int) -> list[tuple[int, int | None]]:
 
 DETAILS_QUERY = """
 SELECT ?item ?itemLabel ?website ?countryLabel ?industryLabel ?linkedin
-       ?parent ?parentLabel WHERE {{
+       ?parent ?parentLabel ?dissolved WHERE {{
   VALUES ?item {{ {values} }}
   OPTIONAL {{ ?item wdt:P856 ?website . }}
   OPTIONAL {{ ?item wdt:P17 ?country . }}
   OPTIONAL {{ ?item wdt:P452 ?industry . }}
   OPTIONAL {{ ?item wdt:P4264 ?linkedin . }}
   OPTIONAL {{ ?item wdt:P749 ?parent . }}
+  OPTIONAL {{ ?item wdt:P576 ?dissolved . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,mul". }}
 }}
 """
@@ -154,6 +155,9 @@ def parse_details(rows: list[dict], employees: dict[str, int]) -> dict[str, Comp
             v = _value(row, key)
             if v and v not in raw[field]:
                 raw[field].append(v)
+        dissolved = _value(row, "dissolved")
+        if dissolved and not rec.dissolved:
+            rec.dissolved = dissolved[:10]
         parent_uri = _value(row, "parent")
         if parent_uri:
             pid = _qid(parent_uri)
@@ -169,6 +173,7 @@ def parse_details(rows: list[dict], employees: dict[str, int]) -> dict[str, Comp
         rec.industry = "; ".join(raw["industries"]) or None
         rec.linkedin_url = linkedin_company_url(raw["linkedin_ids"][0]) if raw["linkedin_ids"] else None
         raw["parents"] = [{"id": p.source_id, "name": p.name} for p in rec.parents]
+        raw["dissolved"] = rec.dissolved
     return records
 
 
