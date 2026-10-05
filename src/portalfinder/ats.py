@@ -54,3 +54,22 @@ def detect_ats(url: str | None) -> str | None:
         if host_re.search(host) and (path_re is None or path_re.search(parts.path)):
             return name
     return None
+
+
+# Providers that host many companies on one host and tell them apart by the
+# first path segment (boards.greenhouse.io/<company>). The rest give each
+# company its own host (<company>.wd5.myworkdayjobs.com).
+PATH_TENANT_PROVIDERS = {"Greenhouse", "Lever", "SmartRecruiters", "Ashby", "Workable", "Jobvite"}
+
+
+def ats_tenant(url: str | None) -> str | None:
+    """A key that is the same for every URL of one company's ATS portal."""
+    provider = detect_ats(url)
+    if not provider:
+        return None
+    parts = urlsplit(url if "://" in url else "https://" + url)
+    host = (parts.hostname or "").lower()
+    if provider in PATH_TENANT_PROVIDERS:
+        first = next((s for s in parts.path.lower().split("/") if s), "")
+        return f"{provider}:{first}"
+    return f"{provider}:{host}"

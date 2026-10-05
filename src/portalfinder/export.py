@@ -15,6 +15,7 @@ COLUMNS = [
     "country", "industry", "parent_companies", "pipeline_status", "status_reason",
     "career_page_url", "portal_scope", "portal_region", "final_ats_url",
     "ats_provider", "verification_status", "confidence", "last_verified_at",
+    "discovered_via",
 ]
 
 QUERY = """
@@ -26,7 +27,7 @@ SELECT c.id AS company_id, c.name AS company_name, c.employee_count, c.linkedin_
        c.status AS pipeline_status, c.status_reason,
        cp.career_page_url, cp.scope AS portal_scope, cp.region AS portal_region,
        cp.final_ats_url, cp.ats_provider, cp.verification_status, cp.confidence,
-       cp.last_verified_at
+       cp.last_verified_at, cp.discovered_via
   FROM companies c
   LEFT JOIN career_portals cp ON cp.company_id = c.id
  ORDER BY c.employee_count DESC, c.id, cp.id

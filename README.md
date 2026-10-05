@@ -15,10 +15,10 @@ run is reconciled so the counts must add up.
 |---|---|
 | Wikidata ingest (company, employees, LinkedIn URL, website, country, industry, parent) | Done |
 | Reconciliation report, CSV export | Done |
-| ATS detection from a URL | Done (used by discovery) |
+| Career portal discovery (careers links, ATS, graduate/regional/affiliate portals, confidence) | Done |
+| Verification through ATS job APIs (Workday, Greenhouse, Lever, SmartRecruiters) | Next |
 | People Data Labs free dataset ingest | Next |
-| Career portal discovery (careers links, redirects, regional portals) | Planned |
-| Verification and confidence scoring | Planned |
+| Headless-browser fallback for JavaScript-only sites, search-API fallback | Planned |
 
 ## Data sources
 
@@ -37,10 +37,52 @@ LinkedIn company URLs come from sources that already carry them:
 pip install -e ".[dev]"
 
 portalfinder ingest-wikidata --db portalfinder.db   # needs access to query.wikidata.org
+portalfinder discover --db portalfinder.db --limit 50   # largest companies first
+portalfinder discover --db portalfinder.db --status failed   # retry the failures
 portalfinder report --db portalfinder.db            # exits 1 if anything doesn't reconcile
 portalfinder export --db portalfinder.db --out exports/companies.csv
 pytest
 ```
+
+## How portal discovery works
+
+For each company, largest first:
+
+1. Fetch the official homepage and collect careers links (link text or URL
+   with careers wording in about 20 languages, or a link straight into an ATS).
+   LinkedIn, Indeed, Glassdoor and other third-party job boards are ignored.
+2. With no careers link, try `/careers`, `/jobs`, `careers.<domain>`,
+   `jobs.<domain>` and a few other common locations. A path that just
+   redirects back to the homepage doesn't count.
+3. The best-ranked link is the **global** portal. On it, find the link or
+   embed into an ATS and follow redirects to get the **final ATS URL**.
+4. Other careers links on the homepage or main careers page become extra
+   portals when they are a **graduate** page (graduates, students, interns,
+   apprentices...), a **regional** page (a country or region name), an
+   **affiliate** site on another domain, or a different ATS tenant
+   (**other**). Pages like `/careers/benefits` are not portals. Up to 6
+   extras per company; any beyond that are counted in the event log.
+
+Robots.txt is respected and requests identify themselves with a
+`portalfinder/0.1` user agent.
+
+**Confidence (0–1)** adds up these signals: linked from the official site
+(0.30) or found by probing (0.20), on the company's own domain (0.20), ATS
+detected (0.20), company name in the ATS URL or page title (0.15), and the
+page shows jobs or links into an ATS (0.15). The signals are stored per
+portal in `career_portals.evidence`.
+
+**Company outcomes after discovery:**
+
+| Status | Reason codes |
+|---|---|
+| `discovered` | at least one portal found |
+| `needs_review` | `careers_page_unreachable`: careers link found but the page blocks or errors (often bot protection) |
+| `no_portal_found` | `no_website`, `no_careers_link`, `no_links_in_html` (JavaScript-only site, needs the browser fallback) |
+| `failed` | `site_unreachable`, `timeout`, `blocked_by_robots`, `http_<code>`, `internal_error` |
+
+Re-running discovery for a company replaces its auto-discovered portals;
+portals with `discovered_via = 'manual'` are kept.
 
 ## How "nothing skipped" works
 
@@ -55,6 +97,10 @@ pytest
   run fails if they don't add up. `portalfinder report` re-checks this, plus:
   every company has a source, every unresolved company has a reason, and
   every rejection has a logged event.
+- Discovery records exactly one outcome per company it selects, and
+  raises if the count doesn't match. Unexpected errors become `failed` /
+  `internal_error` with the traceback in `pipeline_events`.
+- `report` also fails if a company is `discovered` but has no portal.
 - The CSV export has one row per portal and one row for each company that
   has no portal yet, so every company appears.
 

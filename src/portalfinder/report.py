@@ -36,7 +36,7 @@ def build_report(conn: sqlite3.Connection) -> Report:
         rep.problems.append(f"unknown statuses: {sorted(unknown)}")
 
     no_reason = conn.execute(
-        "SELECT COUNT(*) FROM companies WHERE status NOT IN ('pending', 'verified')"
+        "SELECT COUNT(*) FROM companies WHERE status IN ('needs_review', 'no_portal_found', 'failed')"
         " AND (status_reason IS NULL OR status_reason = '')"
     ).fetchone()[0]
     if no_reason:
@@ -48,6 +48,13 @@ def build_report(conn: sqlite3.Connection) -> Report:
     ).fetchone()[0]
     if orphans:
         rep.problems.append(f"{orphans} companies have no source record")
+
+    portal_less = conn.execute(
+        "SELECT COUNT(*) FROM companies c WHERE c.status IN ('discovered', 'verified')"
+        " AND NOT EXISTS (SELECT 1 FROM career_portals p WHERE p.company_id = c.id)"
+    ).fetchone()[0]
+    if portal_less:
+        rep.problems.append(f"{portal_less} companies are marked discovered/verified with no portal")
 
     for run in runs:
         accounted = (run["records_inserted"] + run["records_updated"]

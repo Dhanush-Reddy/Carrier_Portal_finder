@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from portalfinder import MIN_EMPLOYEES
-from portalfinder.db import now
+from portalfinder.db import log_event, now
 from portalfinder.normalize import linkedin_company_url, website_domain
 from portalfinder.records import CompanyRecord
 
@@ -47,11 +47,7 @@ class RunSummary:
 
 
 def _event(conn, run_id, company_id, event, detail) -> None:
-    conn.execute(
-        "INSERT INTO pipeline_events (run_id, company_id, stage, event, detail, created_at)"
-        " VALUES (?, ?, 'ingest', ?, ?, ?)",
-        (run_id, company_id, event, json.dumps(detail, default=str), now()),
-    )
+    log_event(conn, "ingest", event, detail, company_id=company_id, run_id=run_id)
 
 
 def _reject_reason(rec: CompanyRecord, min_employees: int) -> str | None:

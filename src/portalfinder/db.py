@@ -7,6 +7,7 @@ totals of a run can always be reconciled.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,6 +78,9 @@ CREATE TABLE IF NOT EXISTS career_portals (
     confidence        REAL,
     last_verified_at  TEXT,
     discovered_via    TEXT,
+    page_title        TEXT,
+    http_status       INTEGER,
+    evidence          TEXT,
     UNIQUE (company_id, career_page_url)
 );
 
@@ -105,8 +109,38 @@ CREATE TABLE IF NOT EXISTS pipeline_events (
 """
 
 
+# Columns added after a table was first created: (table, column, type).
+MIGRATIONS = (
+    ("career_portals", "page_title", "TEXT"),
+    ("career_portals", "http_status", "INTEGER"),
+    ("career_portals", "evidence", "TEXT"),
+)
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, kind in MIGRATIONS:
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+
+
+def log_event(
+    conn: sqlite3.Connection,
+    stage: str,
+    event: str,
+    detail: dict,
+    company_id: int | None = None,
+    run_id: int | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO pipeline_events (run_id, company_id, stage, event, detail, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (run_id, company_id, stage, event, json.dumps(detail, default=str), now()),
+    )
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -114,4 +148,5 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
