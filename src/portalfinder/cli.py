@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import typer
 
 from portalfinder import MIN_EMPLOYEES
-from portalfinder.db import connect
+from portalfinder.db import STATUSES, connect
+from portalfinder.discover import discover_all
 from portalfinder.export import export_csv
 from portalfinder.ingest import ingest
 from portalfinder.report import build_report
 from portalfinder.sources import wikidata
+from portalfinder.web import Fetcher
 
 app = typer.Typer(no_args_is_help=True, help=__doc__)
 DB_OPTION = typer.Option("portalfinder.db", "--db", help="SQLite database path.")
@@ -38,6 +41,42 @@ def ingest_wikidata(
         f"run {run.run_id}: seen {run.seen}, inserted {run.inserted}, updated {run.updated},"
         f" merged {run.merged}, rejected {run.rejected}"
     )
+
+
+@app.command()
+def discover(
+    db: Path = DB_OPTION,
+    status: list[str] = typer.Option(
+        ["pending"], help="Process companies in this status (repeatable), e.g. --status failed."
+    ),
+    limit: int = typer.Option(None, help="Process at most this many companies, largest first."),
+    company_id: list[int] = typer.Option(None, "--company-id", help="Only these company IDs."),
+    concurrency: int = typer.Option(10, help="Companies fetched in parallel."),
+):
+    """Find career portals and their ATS for each company."""
+    bad = set(status) - set(STATUSES)
+    if bad:
+        typer.echo(f"unknown status: {', '.join(sorted(bad))}", err=True)
+        raise typer.Exit(2)
+    conn = connect(db)
+
+    async def go():
+        fetcher = Fetcher()
+        try:
+            return await discover_all(
+                conn, fetcher, tuple(status), limit, concurrency, company_id or None,
+                on_result=lambda r: typer.echo(
+                    f"  company {r.company_id}: {r.status}"
+                    + (f" ({r.reason})" if r.reason else f", {len(r.portals)} portal(s)")
+                ),
+            )
+        finally:
+            await fetcher.aclose()
+
+    summary = asyncio.run(go())
+    typer.echo(f"Processed {summary.selected} companies: " + ", ".join(
+        f"{k} {v}" for k, v in sorted(summary.by_status.items())) if summary.selected
+        else "No companies matched.")
 
 
 @app.command()

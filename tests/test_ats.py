@@ -1,6 +1,6 @@
 import pytest
 
-from portalfinder.ats import detect_ats
+from portalfinder.ats import ats_tenant, detect_ats
 from portalfinder.normalize import linkedin_company_url, website_domain
 
 
@@ -28,3 +28,11 @@ def test_normalisers():
         "https://www.linkedin.com/company/google"
     assert linkedin_company_url("1441") == "https://www.linkedin.com/company/1441"
     assert linkedin_company_url(None) is None
+
+
+def test_ats_tenant():
+    assert ats_tenant("https://boards.greenhouse.io/acme/jobs/1") == "Greenhouse:acme"
+    assert ats_tenant("https://jobs.lever.co/acme") == ats_tenant("https://jobs.lever.co/acme/x")
+    assert ats_tenant("https://acme.wd5.myworkdayjobs.com/External") == \
+        ats_tenant("https://acme.wd5.myworkdayjobs.com/en-US/External/job/1")
+    assert ats_tenant("https://www.acme.com/careers") is None
