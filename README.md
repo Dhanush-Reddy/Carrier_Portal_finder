@@ -109,8 +109,11 @@ Run `portalfinder <command> --help` for every option.
 
 For every company in a country with more than 1,000 employees, download the
 free company dataset from <https://www.peopledatalabs.com/company-dataset>
-(CSV, pipe-delimited or JSON; a zip file is fine, or unzip it with 7-Zip),
-then:
+(fill in the short form; CSV, pipe-delimited or JSON; a zip file is fine, or
+unzip it with 7-Zip). If that download doesn't work, People Data Labs' older
+2019 copy on Kaggle works too (free Kaggle sign-in):
+<https://www.kaggle.com/datasets/peopledatalabssf/free-7-million-company-dataset>,
+file `companies_sorted.csv`. Then:
 
 ```bat
 portalfinder ingest-pdl path\to\free_company_dataset.zip --db portalfinder.db --country India

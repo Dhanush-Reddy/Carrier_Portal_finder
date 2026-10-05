@@ -137,3 +137,29 @@ def test_cli_ingest_pdl_then_export(tmp_path):
     assert names == ["Wipro", "Infosys", "Zoho Corporation"]
     missing = runner.invoke(app, ["ingest-pdl", str(tmp_path / "nope.csv"), "--db", str(db)])
     assert missing.exit_code == 2
+
+
+def test_kaggle_copy_layout(tmp_path):
+    """People Data Labs' 2019 copy on Kaggle (companies_sorted.csv)."""
+    path = tmp_path / "companies_sorted.csv"
+    path.write_text(
+        ",name,domain,year founded,industry,size range,locality,country,linkedin url,"
+        "current employee estimate,total employee estimate\n"
+        "5872184,ibm,ibm.com,1911.0,information technology and services,10001+,"
+        '"new york, new york, united states",united states,linkedin.com/company/ibm,274047,716906\n'
+        "4425416,tata consultancy services,tcs.com,1968.0,information technology and services,10001+,"
+        '"bombay, maharashtra, india",india,linkedin.com/company/tata-consultancy-services,190771,341369\n'
+        "21074,mphasis,mphasis.com,1998.0,information technology and services,10001+,"
+        '"bangalore, karnataka, india",india,linkedin.com/company/mphasis,12500,20000\n'
+        "1,small india co,small.example,2001.0,internet,1001 - 5000,"
+        '"pune, maharashtra, india",india,linkedin.com/company/smallco,800,900\n'
+        "2,tiny india co,tiny.example,2015.0,internet,11 - 50,"
+        '"pune, maharashtra, india",india,linkedin.com/company/tinyco,20,30\n')
+    recs = list(pdl.records(path, ["India"], 1000))
+    assert [r.name for r in recs] == ["Tata Consultancy Services", "Mphasis", "Small India Co"]
+    tcs, mphasis, small = recs
+    assert tcs.employee_count == 190771  # the estimate, inside the 10001+ band
+    assert small.employee_count == 1001  # estimate below the band: the band's lower bound
+    assert tcs.website == "https://tcs.com"
+    assert tcs.linkedin_url == "https://www.linkedin.com/company/tata-consultancy-services"
+    assert tcs.raw["founded"] == "1968.0" and tcs.raw["size"] == "10001+"

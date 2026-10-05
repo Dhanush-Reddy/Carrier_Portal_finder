@@ -6,6 +6,11 @@ lines, usually zipped. Each record has ``name``, ``website``, ``industry``,
 ``size`` (a band such as "1001-5000" or "10001+"), ``locality``, ``region``,
 ``country``, ``founded``, ``linkedin_url`` and ``id``, all lower case.
 
+The older copy on Kaggle ("7+ Million Company Dataset", companies_sorted.csv)
+names the columns differently (``domain``, ``size range`` such as
+"1001 - 5000", ``linkedin url``, ``year founded``, ``current employee
+estimate``); both layouts are read.
+
 The file is streamed, so it is never loaded into memory; only records in the
 wanted countries and size bands become ingest records. The band's lower
 bound is used as the employee count ("1001-5000" becomes 1001).
@@ -117,6 +122,26 @@ def _json_rows(first: str, rest: Iterable[str]) -> Iterator[dict]:
                 yield row
 
 
+# Column names used by the Kaggle copy, mapped to the current dataset's.
+COLUMN_ALIASES = {
+    "domain": "website",
+    "size range": "size",
+    "linkedin url": "linkedin_url",
+    "year founded": "founded",
+    "current employee estimate": "employee_estimate",
+}
+
+
+def normalize(row: dict) -> dict:
+    """One layout for both versions of the dataset."""
+    out = {}
+    for key, value in row.items():
+        key = (key or "").strip().lower()
+        out[COLUMN_ALIASES.get(key, key)] = value.strip() if isinstance(value, str) else value
+    out["size"] = re.sub(r"\s+", "", str(out.get("size") or "")).lower()  # "1001 - 5000"
+    return out
+
+
 @dataclass
 class ScanSummary:
     read: int = 0
@@ -137,6 +162,7 @@ def records(
     bands = {b for b in SIZE_BANDS if (band_lower_bound(b) or 0) > min_employees}
     summary = summary if summary is not None else ScanSummary()
     for row in iter_rows(path):
+        row = normalize(row)
         summary.read += 1
         if on_progress and summary.read % 1_000_000 == 0:
             on_progress(summary.read, summary.kept)
@@ -159,15 +185,20 @@ def to_record(row: dict) -> CompanyRecord:
     if linkedin and "://" not in linkedin:
         linkedin = "https://www." + linkedin.removeprefix("www.")
     name = (row.get("name") or "").strip()
+    count = band_lower_bound(row.get("size"))
+    estimate = str(row.get("employee_estimate") or "").replace(",", "").strip()
+    if estimate.isdigit() and count and int(estimate) > count:
+        count = int(estimate)  # the Kaggle copy's estimate, when inside a larger band
     return CompanyRecord(
         source=SOURCE,
         source_id=(row.get("id") or linkedin or website or name).strip(),
         name=nice_name(name) or None,
-        employee_count=band_lower_bound(row.get("size")),
+        employee_count=count,
         linkedin_url=linkedin or None,
         website=website or None,
         country=nice_place(row.get("country")),
         industry=(row.get("industry") or "").strip() or None,
         raw={k: row.get(k) for k in ("id", "name", "size", "industry", "locality", "region",
-                                     "country", "founded", "website", "linkedin_url")},
+                                     "country", "founded", "website", "linkedin_url",
+                                     "employee_estimate") if row.get(k) not in (None, "")},
     )
