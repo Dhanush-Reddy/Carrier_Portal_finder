@@ -36,6 +36,16 @@ class Page:
         return generic and self.text.lstrip()[:200].lower().startswith(("<!doctype html", "<html"))
 
 
+MAX_RETRY_AFTER = 30.0  # seconds; a longer wait is not worth it for one page
+
+
+def _retry_after(value: str | None) -> float:
+    try:
+        return min(max(float(value), 0.0), MAX_RETRY_AFTER) if value else 5.0
+    except ValueError:  # an HTTP date; not worth parsing
+        return 5.0
+
+
 class FetchError(Exception):
     """A fetch that could not complete. ``reason`` is a stable reason code."""
 
@@ -65,47 +75,81 @@ class Fetcher:
         )
         self.retries = retries
         self.respect_robots = respect_robots
-        self._robots: dict[str, RobotFileParser | None] = {}
+        # Origin -> parsed robots.txt, None (no rules) or a FetchError reason
+        # when robots.txt could not be read and everything is disallowed.
+        self._robots: dict[str, RobotFileParser | str | None] = {}
         self._robots_locks: dict[str, asyncio.Lock] = {}
 
     async def aclose(self) -> None:
         await self.client.aclose()
 
-    async def _robots_for(self, origin: str) -> RobotFileParser | None:
+    async def _robots_for(self, origin: str) -> RobotFileParser | str | None:
+        """robots.txt for an origin, read as RFC 9309 says.
+
+        - 2xx: its rules apply.
+        - 4xx, including 401 and 403: there are no rules. Bot firewalls often
+          answer 403 here; the page itself then fails with its own status.
+        - 5xx after a retry: everything is disallowed, recorded as
+          ``robots_unreachable`` so it is not mistaken for a real block.
+        - No answer after a retry: everything is disallowed too, recorded as
+          ``timeout`` or ``site_unreachable`` since the site itself is down.
+        """
         lock = self._robots_locks.setdefault(origin, asyncio.Lock())
         async with lock:
             if origin in self._robots:
                 return self._robots[origin]
-            parser: RobotFileParser | None = None
-            try:
-                resp = await self.client.get(origin + "/robots.txt")
-                if resp.status_code == 200:
-                    parser = RobotFileParser()
-                    parser.parse(resp.text.splitlines())
-                elif resp.status_code in (401, 403):
-                    # Per RFC 9309, an access error on robots.txt means disallow all.
-                    parser = RobotFileParser()
-                    parser.parse(["User-agent: *", "Disallow: /"])
-            except httpx.HTTPError:
-                parser = None  # unreachable robots.txt: treat as no restrictions
-            self._robots[origin] = parser
-            return parser
+            result: RobotFileParser | str | None = "robots_unreachable"
+            for _ in range(self.retries + 1):
+                try:
+                    resp = await self.client.get(origin + "/robots.txt")
+                except httpx.TimeoutException:
+                    result = "timeout"
+                    continue
+                except httpx.TransportError:
+                    result = "site_unreachable"
+                    continue
+                except httpx.TooManyRedirects:
+                    result = None  # RFC 9309: treated like a 4xx
+                    break
+                except httpx.HTTPError:
+                    result = "robots_unreachable"
+                    continue
+                if resp.status_code >= 500:
+                    result = "robots_unreachable"
+                    continue
+                if 200 <= resp.status_code < 300:
+                    result = RobotFileParser()
+                    result.parse(resp.text.splitlines())
+                else:
+                    result = None
+                break
+            self._robots[origin] = result
+            return result
 
     async def sitemaps(self, origin: str) -> list[str]:
         """Sitemap URLs declared in the origin's robots.txt."""
         robots = await self._robots_for(origin)
-        return list(robots.site_maps() or []) if robots else []
+        return list(robots.site_maps() or []) if isinstance(robots, RobotFileParser) else []
 
-    async def allowed(self, url: str) -> bool:
+    async def blocked(self, url: str) -> str | None:
+        """Why robots.txt forbids fetching ``url``, or None if it is allowed."""
         if not self.respect_robots:
-            return True
+            return None
         parts = urlsplit(url)
         robots = await self._robots_for(f"{parts.scheme}://{parts.netloc}")
-        return robots is None or robots.can_fetch(USER_AGENT, url)
+        if isinstance(robots, str):
+            return robots
+        if robots is not None and not robots.can_fetch(USER_AGENT, url):
+            return "blocked_by_robots"
+        return None
+
+    async def allowed(self, url: str) -> bool:
+        return await self.blocked(url) is None
 
     async def get(self, url: str) -> Page:
-        if not await self.allowed(url):
-            raise FetchError("blocked_by_robots", url)
+        reason = await self.blocked(url)
+        if reason:
+            raise FetchError(reason, url)
         last: Exception | None = None
         for attempt in range(self.retries + 1):
             try:
@@ -117,8 +161,12 @@ class Fetcher:
                             break
                         chunks.append(chunk)
                     body = b"".join(chunks)
-                    if resp.status_code >= 500 and attempt < self.retries:
-                        continue
+                    if attempt < self.retries:
+                        if resp.status_code >= 500:
+                            continue
+                        if resp.status_code == 429:
+                            await asyncio.sleep(_retry_after(resp.headers.get("retry-after")))
+                            continue
                     return Page(
                         requested_url=url,
                         url=str(resp.url),

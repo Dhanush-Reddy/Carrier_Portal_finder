@@ -140,3 +140,19 @@ def test_exclusion_removes_auto_discovered_portals(conn):
     ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q9", "RAO UES", 577000, dissolved="2008-07-01")])
     left = [r["career_page_url"] for r in conn.execute("SELECT career_page_url FROM career_portals")]
     assert left == ["https://rao.ru/manual"]
+
+
+def test_export_hides_stale_portals_of_excluded_companies(conn, tmp_path):
+    # A database from before exclusion removed portals: Cegep was excluded
+    # but still holds the portals found while it qualified.
+    ingest(conn, "wikidata", [CompanyRecord("wikidata", "Q1", "Cegep", 5000)])
+    cid = conn.execute("SELECT id FROM companies").fetchone()["id"]
+    for url, via in [("https://cegep.ca/carrieres", "homepage_link"), ("https://cegep.ca/hand", "manual")]:
+        conn.execute("INSERT INTO career_portals (company_id, career_page_url, discovered_via)"
+                     " VALUES (?, ?, ?)", (cid, url, via))
+    conn.execute("UPDATE companies SET status = 'excluded',"
+                 " status_reason = 'implausible_employee_count'")
+    out = tmp_path / "out.csv"
+    assert export_csv(conn, out) == 1
+    row = next(csv.DictReader(out.open()))
+    assert (row["pipeline_status"], row["career_page_url"]) == ("excluded", "https://cegep.ca/hand")
