@@ -1,0 +1,15 @@
+{"results": {"bindings": [
+  {"item": {"value": "http://www.wikidata.org/entity/Q312"}, "itemLabel": {"value": "Apple Inc."},
+   "website": {"value": "https://www.apple.com/"}, "countryLabel": {"value": "United States"},
+   "industryLabel": {"value": "consumer electronics"}, "linkedin": {"value": "apple"}},
+  {"item": {"value": "http://www.wikidata.org/entity/Q312"}, "itemLabel": {"value": "Apple Inc."},
+   "website": {"value": "https://www.apple.com/"}, "countryLabel": {"value": "United States"},
+   "industryLabel": {"value": "software industry"}, "linkedin": {"value": "apple"}},
+  {"item": {"value": "http://www.wikidata.org/entity/Q95"}, "itemLabel": {"value": "Google"},
+   "website": {"value": "https://www.google.com/"}, "countryLabel": {"value": "United States"},
+   "industryLabel": {"value": "internet industry"}, "linkedin": {"value": "google"},
+   "parent": {"value": "http://www.wikidata.org/entity/Q20800404"}, "parentLabel": {"value": "Alphabet Inc."}},
+  {"item": {"value": "http://www.wikidata.org/entity/Q20800404"}, "itemLabel": {"value": "Alphabet Inc."},
+   "website": {"value": "https://abc.xyz/"}, "countryLabel": {"value": "United States"},
+   "industryLabel": {"value": "conglomerate"}}
+]}}
